@@ -1,0 +1,47 @@
+# 核心依赖
+python>=3.8
+
+# 数据处理
+pandas>=1.5.0
+openpyxl>=3.0.0
+numpy>=1.24.0
+
+# AI模型集成
+openai>=1.0.0
+anthropic>=0.25.0
+requests>=2.31.0
+
+# WordPress集成
+python-wordpress-xmlrpc>=2.3
+wordpress-api>=2.0
+requests-oauthlib>=1.3.0
+
+# Web框架（可选API）
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+
+# 任务调度
+apscheduler>=3.10.0
+celery>=5.3.0
+redis>=4.5.0
+
+# 日志和配置
+python-dotenv>=1.0.0
+loguru>=0.7.0
+pyyaml>=6.0
+
+# 测试
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+
+# 开发工具
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+pre-commit>=3.5.0
+
+# Jupyter笔记本
+jupyter>=1.0.0
+ipykernel>=6.0.0
