@@ -1,0 +1,337 @@
+{
+  "workflow_id": "4a4bb20e",
+  "input_file": "测试用例.xlsx",
+  "dry_run": true,
+  "steps": {
+    "1_excel_keywords": {
+      "count": 3,
+      "data": [
+        "hardware",
+        "lamp holder",
+        "Lighting accessories"
+      ]
+    },
+    "2_expanded_keywords": {
+      "count": 30,
+      "data": [
+        "hardware",
+        "lamp holder",
+        "Lighting accessories",
+        "hardware 中文",
+        "hardware acceleration",
+        "hardware store",
+        "hardware monitor",
+        "hardware accelerated gpu scheduling",
+        "hardware societe",
+        "hardware info",
+        "hardware engineer",
+        "hardware tester",
+        "lamp holder e27",
+        "lamp holder with switch",
+        "lamp holder type",
+        "lamp holder stl",
+        "lamp holder philips",
+        "lamp holder with clamp",
+        "lamp holder light fitting b22",
+        "lamp holder screw",
+        "lamp holder bunnings",
+        "lighting accessories list",
+        "lighting accessories hs code",
+        "lighting accessories for photography",
+        "lighting accessories in qatar",
+        "lighting accessories for car",
+        "lighting accessories for home",
+        "lighting accessories meaning",
+        "lighting accessories hsn code",
+        "lighting accessories store"
+      ]
+    },
+    "3_filtered_keywords": {
+      "count": 30,
+      "data": [
+        "hardware",
+        "lamp holder",
+        "Lighting accessories",
+        "hardware 中文",
+        "hardware acceleration",
+        "hardware store",
+        "hardware monitor",
+        "hardware accelerated gpu scheduling",
+        "hardware societe",
+        "hardware info",
+        "hardware engineer",
+        "hardware tester",
+        "lamp holder e27",
+        "lamp holder with switch",
+        "lamp holder type",
+        "lamp holder stl",
+        "lamp holder philips",
+        "lamp holder with clamp",
+        "lamp holder light fitting b22",
+        "lamp holder screw",
+        "lamp holder bunnings",
+        "lighting accessories list",
+        "lighting accessories hs code",
+        "lighting accessories for photography",
+        "lighting accessories in qatar",
+        "lighting accessories for car",
+        "lighting accessories for home",
+        "lighting accessories meaning",
+        "lighting accessories hsn code",
+        "lighting accessories store"
+      ]
+    },
+    "4_titles": {
+      "count": 30,
+      "data": [
+        "Complete Guide to hardware",
+        "Complete Guide to lamp holder",
+        "Complete Guide to Lighting accessories",
+        "Complete Guide to hardware 中文",
+        "Complete Guide to hardware acceleration",
+        "Complete Guide to hardware store",
+        "Complete Guide to hardware monitor",
+        "Complete Guide to hardware accelerated gpu scheduling",
+        "Complete Guide to hardware societe",
+        "Complete Guide to hardware info",
+        "Complete Guide to hardware engineer",
+        "Complete Guide to hardware tester",
+        "Complete Guide to lamp holder e27",
+        "Complete Guide to lamp holder with switch",
+        "Complete Guide to lamp holder type",
+        "Complete Guide to lamp holder stl",
+        "Complete Guide to lamp holder philips",
+        "Complete Guide to lamp holder with clamp",
+        "Complete Guide to lamp holder light fitting b22",
+        "Complete Guide to lamp holder screw",
+        "Complete Guide to lamp holder bunnings",
+        "Complete Guide to lighting accessories list",
+        "Complete Guide to lighting accessories hs code",
+        "Complete Guide to lighting accessories for photography",
+        "Complete Guide to lighting accessories in qatar",
+        "Complete Guide to lighting accessories for car",
+        "Complete Guide to lighting accessories for home",
+        "Complete Guide to lighting accessories meaning",
+        "Complete Guide to lighting accessories hsn code",
+        "Complete Guide to lighting accessories store"
+      ]
+    },
+    "5_contents": {
+      "count": 30,
+      "data": [
+        "<article><h2>Complete Guide to hardware</h2><p>This is placeholder content for hardware. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder</h2><p>This is placeholder content for lamp holder. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to Lighting accessories</h2><p>This is placeholder content for Lighting accessories. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware 中文</h2><p>This is placeholder content for hardware 中文. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware acceleration</h2><p>This is placeholder content for hardware acceleration. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware store</h2><p>This is placeholder content for hardware store. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware monitor</h2><p>This is placeholder content for hardware monitor. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware accelerated gpu scheduling</h2><p>This is placeholder content for hardware accelerated gpu scheduling. In production mode, this would be a ~1500 word SEO-optimi...",
+        "<article><h2>Complete Guide to hardware societe</h2><p>This is placeholder content for hardware societe. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware info</h2><p>This is placeholder content for hardware info. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware engineer</h2><p>This is placeholder content for hardware engineer. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to hardware tester</h2><p>This is placeholder content for hardware tester. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder e27</h2><p>This is placeholder content for lamp holder e27. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder with switch</h2><p>This is placeholder content for lamp holder with switch. In production mode, this would be a ~1500 word SEO-optimized article.</p></articl...",
+        "<article><h2>Complete Guide to lamp holder type</h2><p>This is placeholder content for lamp holder type. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder stl</h2><p>This is placeholder content for lamp holder stl. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder philips</h2><p>This is placeholder content for lamp holder philips. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder with clamp</h2><p>This is placeholder content for lamp holder with clamp. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder light fitting b22</h2><p>This is placeholder content for lamp holder light fitting b22. In production mode, this would be a ~1500 word SEO-optimized article....",
+        "<article><h2>Complete Guide to lamp holder screw</h2><p>This is placeholder content for lamp holder screw. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lamp holder bunnings</h2><p>This is placeholder content for lamp holder bunnings. In production mode, this would be a ~1500 word SEO-optimized article.</p></article>...",
+        "<article><h2>Complete Guide to lighting accessories list</h2><p>This is placeholder content for lighting accessories list. In production mode, this would be a ~1500 word SEO-optimized article.</p></ar...",
+        "<article><h2>Complete Guide to lighting accessories hs code</h2><p>This is placeholder content for lighting accessories hs code. In production mode, this would be a ~1500 word SEO-optimized article.</...",
+        "<article><h2>Complete Guide to lighting accessories for photography</h2><p>This is placeholder content for lighting accessories for photography. In production mode, this would be a ~1500 word SEO-opti...",
+        "<article><h2>Complete Guide to lighting accessories in qatar</h2><p>This is placeholder content for lighting accessories in qatar. In production mode, this would be a ~1500 word SEO-optimized article....",
+        "<article><h2>Complete Guide to lighting accessories for car</h2><p>This is placeholder content for lighting accessories for car. In production mode, this would be a ~1500 word SEO-optimized article.</...",
+        "<article><h2>Complete Guide to lighting accessories for home</h2><p>This is placeholder content for lighting accessories for home. In production mode, this would be a ~1500 word SEO-optimized article....",
+        "<article><h2>Complete Guide to lighting accessories meaning</h2><p>This is placeholder content for lighting accessories meaning. In production mode, this would be a ~1500 word SEO-optimized article.</...",
+        "<article><h2>Complete Guide to lighting accessories hsn code</h2><p>This is placeholder content for lighting accessories hsn code. In production mode, this would be a ~1500 word SEO-optimized article....",
+        "<article><h2>Complete Guide to lighting accessories store</h2><p>This is placeholder content for lighting accessories store. In production mode, this would be a ~1500 word SEO-optimized article.</p></..."
+      ]
+    },
+    "6_publish_results": [
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to Lighting accessories",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware 中文",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware acceleration",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware store",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware monitor",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware accelerated gpu scheduling",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware societe",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware info",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware engineer",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to hardware tester",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder e27",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder with switch",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder type",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder stl",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder philips",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder with clamp",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder light fitting b22",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder screw",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lamp holder bunnings",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories list",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories hs code",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories for photography",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories in qatar",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories for car",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories for home",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories meaning",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories hsn code",
+        "status": "draft",
+        "url": "(dry-run)"
+      },
+      {
+        "post_id": null,
+        "title": "Complete Guide to lighting accessories store",
+        "status": "draft",
+        "url": "(dry-run)"
+      }
+    ]
+  }
+}

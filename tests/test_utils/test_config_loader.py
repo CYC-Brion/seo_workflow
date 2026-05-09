@@ -161,7 +161,7 @@ class TestConfigManager:
         with pytest.raises(ValueError) as exc_info:
             self.config_manager.load_all_configs()
 
-        assert "至少需要配置OpenAI或Anthropic API密钥" in str(exc_info.value)
+        assert "至少需要配置 OpenAI、Azure OpenAI 或 Anthropic 中的一种 API 密钥" in str(exc_info.value)
 
     def test_project_config_property(self):
         """测试项目配置属性"""
@@ -455,6 +455,7 @@ class TestConfigManager:
         mock_project_config = Mock(spec=ProjectConfig)
         mock_project_config.openai_api_key = "test-openai-key"
         mock_project_config.anthropic_api_key = ""
+        mock_project_config.azure_openai_api_key = ""
 
         # 模拟WordPress配置（完整）
         mock_wp_config = Mock(spec=WordPressConfig)
@@ -648,6 +649,10 @@ class TestConfigManager:
             "ANTHROPIC_API_KEY": "test-anthropic-key",
             "OPENAI_BASE_URL": "https://api.openai.com/v1",
             "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/",
+            "AZURE_OPENAI_API_KEY": "test-azure-key",
+            "AZURE_OPENAI_DEPLOYMENT": "gpt-5.4",
+            "AZURE_OPENAI_API_VERSION": "2024-12-01-preview",
             "DEFAULT_AI_MODEL": "gpt-4",
             "MAX_KEYWORDS_PER_BATCH": 200,
             "MAX_FILE_SIZE_MB": 20,
@@ -674,6 +679,10 @@ class TestConfigManager:
         assert config.anthropic_api_key == "test-anthropic-key"
         assert config.openai_base_url == "https://api.openai.com/v1"
         assert config.anthropic_base_url == "https://api.anthropic.com"
+        assert config.azure_openai_endpoint == "https://test.openai.azure.com/"
+        assert config.azure_openai_api_key == "test-azure-key"
+        assert config.azure_openai_deployment == "gpt-5.4"
+        assert config.azure_openai_api_version == "2024-12-01-preview"
         assert config.default_ai_model == "gpt-4"
         assert config.max_keywords_per_batch == 200
         assert config.max_file_size_mb == 20
@@ -702,6 +711,10 @@ class TestConfigManager:
         assert config.anthropic_api_key == ""  # 默认值
         assert config.openai_base_url == "https://api.openai.com/v1"  # 默认值
         assert config.anthropic_base_url == "https://api.anthropic.com"  # 默认值
+        assert config.azure_openai_endpoint == ""  # 默认值
+        assert config.azure_openai_api_key == ""  # 默认值
+        assert config.azure_openai_deployment == ""  # 默认值
+        assert config.azure_openai_api_version == "2024-12-01-preview"  # 默认值
         assert config.default_ai_model == "gpt-4"  # 默认值
         assert config.max_keywords_per_batch == 100  # 默认值
         assert config.max_file_size_mb == 10  # 默认值

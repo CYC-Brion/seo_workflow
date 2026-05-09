@@ -4,12 +4,18 @@ Prompt配置管理
 支持版本管理和灵活编辑
 """
 
+import os
+
+# 目标行业名称，通过环境变量 SEO_INDUSTRY_NAME 配置，默认五金灯饰配件
+INDUSTRY_NAME = os.getenv("SEO_INDUSTRY_NAME", "Metal Hardware & Lighting Accessories Processing")
+TARGET_AUDIENCE = os.getenv("SEO_TARGET_AUDIENCE", f"Potential Buyers for {INDUSTRY_NAME}")
+
 # 关键词筛选Prompt（节点3）
 KEYWORD_FILTER_PROMPT = {
-    "system": "You are an SEO specialist and professional content writer. Your main task is to extract search keywords for search engines that match Metal Hardware & Lighting Accessories Processing.",
-    "user": "Please filter the following keywords and remove any that are not relevant to Metal Hardware & Lighting Accessories Processing. Return only the relevant keywords in a list format.\n\nKeywords: {keywords}",
+    "system": f"You are an SEO specialist and professional content writer. Your main task is to extract search keywords for search engines that match {INDUSTRY_NAME}.",
+    "user": f"Please filter the following keywords and remove any that are not relevant to {INDUSTRY_NAME}. Return only the relevant keywords in a list format.\n\nKeywords: {{keywords}}",
     "version": "1.0",
-    "description": "筛选与五金灯饰配件相关的关键词",
+    "description": "筛选与目标行业相关的关键词",
     "parameters": {
         "temperature": 0.3,
         "max_tokens": 1000,
@@ -18,13 +24,14 @@ KEYWORD_FILTER_PROMPT = {
 
 # 标题生成Prompt（节点4）
 TITLE_GENERATOR_PROMPT = {
-    "system": "You are a specialist well-versed in the Metal Hardware & Lighting Accessories Processing and a professional content writer who generates compelling blog post titles that capture readers' attention based on specified keywords. While leveraging industry knowledge, prioritize natural phrasing and titles appropriate for the content—there is no need to include the industry name in the title. Create titles that incorporate elements of specificity, uniqueness, and engagement to encourage readers to click, while also optimizing them for search engines.",
+    "system": f"You are a specialist well-versed in the {INDUSTRY_NAME} and a professional content writer who generates compelling blog post titles that capture readers' attention based on specified keywords. While leveraging industry knowledge, prioritize natural phrasing and titles appropriate for the content—there is no need to include the industry name in the title. Create titles that incorporate elements of specificity, uniqueness, and engagement to encourage readers to click, while also optimizing them for search engines.",
     "user": """1. Some keywords are recommended by search engines, which may include synonyms or similar terms. Even if there are multiple keywords with the same meaning, create blog post titles based on the keywords from unique perspectives or different angles to introduce industry knowledge and professional concepts in an easy-to-understand manner, while ensuring the content does not overlap.
 2. When recommended keywords have different meanings, create titles for independent themes based on each keyword.
 3. Always include the keywords into the title.
 4. Titles should be engaging to attract user interest and clicks. Use diverse styles such as question forms or opinion-based prompts.
+5. Output plain text titles only — do NOT use markdown formatting like **bold** or *italic*.
 
-Keywords: {keywords}
+Keywords: {keyword}
 
 Please generate 3 distinct titles for each keyword.""",
     "version": "1.0",
@@ -37,17 +44,17 @@ Please generate 3 distinct titles for each keyword.""",
 
 # 文章内容生成Prompt（节点5）
 CONTENT_GENERATOR_PROMPT = {
-    "system": "You are a specialist well-versed in the Metal Hardware & Lighting Accessories Processing field and a professional content writer. Your role is to create engaging blog posts that provide valuable information to readers, based on the specified title and target keywords. Leverage industry knowledge related to the title, incorporate content that readers will find beneficial, and generate clear, compelling content that draws them in.",
-    "user": """# Summary
-Based on the title: "{title}", create a high-quality English article with SEO in mind.
+    "system": f"You are a specialist well-versed in the {INDUSTRY_NAME} field and a professional content writer. Your role is to create engaging blog posts that provide valuable information to readers, based on the specified title and target keywords. Leverage industry knowledge related to the title, incorporate content that readers will find beneficial, and generate clear, compelling content that draws them in.",
+    "user": f"""# Summary
+Based on the title: "{{title}}", create a high-quality English article with SEO in mind.
 
 # Background
-You are an experienced SEO specialist with a deep understanding of the Metal Hardware & Lighting Accessories Processing field. Create high-quality SEO articles that comply with Google's SEO rules based on the following requirements. The article should be engaging and encourage readers to click.
+You are an experienced SEO specialist with a deep understanding of the {INDUSTRY_NAME} field. Create high-quality SEO articles that comply with Google's SEO rules based on the following requirements. The article should be engaging and encourage readers to click.
 
 # Goals
 Follow the instructions below to create articles that match the theme, address user search intent, and improve website search rankings by adhering to SEO rules of major search engines like Google.
-1. Target Audience: Potential Buyers for Metal Hardware & Lighting Accessories
-2. Target Keyword: {keyword}
+1. Target Audience: {TARGET_AUDIENCE}
+2. Target Keyword: {{keyword}}
    - Note: Use the keyword naturally throughout the title and body. Avoid mechanical keyword stuffing; Additionally, paraphrasing should be appropriately used and word order adjusted to ensure that the English expression is smooth and natural, aligning with the reading habits of native English speakers.
 3. Use bullet points, headings, and lists to structure the article clearly for easy reader comprehension.
 4. The article should be around 1,500 words in length
@@ -73,18 +80,18 @@ Follow the instructions below to create articles that match the theme, address u
 6. Output the article in HTML format. Include only the article's body in HTML tags, without any explanations or AI notes. The final response should be the formatted HTML code for the article body.
 
 # Final output format:
-{{
-  "title": "{title}",
-  "keyword": "{keyword}",
+{{{{
+  "title": "{{title}}",
+  "keyword": "{{keyword}}",
   "content": "HTML-formatted article content (Do not contain the main heading!)",
   "slug": "concise-slug-related-to-article",
   "excerpt": "80-100 character summary of the article"
-}}""",
+}}}}""",
     "version": "1.0",
     "description": "基于标题生成约1500字英文SEO文章",
     "parameters": {
         "temperature": 0.8,
-        "max_tokens": 4000,
+        "max_tokens": 8000,
     }
 }
 

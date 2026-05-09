@@ -109,7 +109,10 @@ class TestKeywordExpander:
 
     def test_expand_with_patterns(self):
         """测试基于模式的扩展"""
-        expander = KeywordExpander("test-expander", {"use_mock_data": False})
+        expander = KeywordExpander("test-expander", {
+            "use_mock_data": False,
+            "max_expansions_per_keyword": 15,
+        })
 
         expansions = expander._expand_with_patterns("test keyword")
         assert len(expansions) > 0
@@ -139,7 +142,7 @@ class TestKeywordExpander:
         expander = KeywordExpander("test-expander", {"use_mock_data": True})
 
         keywords = ["metal hardware", "lighting accessories"]
-        result = expander.execute(keywords)
+        result = expander.execute_impl(keywords)
 
         assert isinstance(result, list)
         assert len(result) > len(keywords)  # 应该包含扩展关键词
@@ -150,7 +153,7 @@ class TestKeywordExpander:
         """测试执行单个关键词扩展"""
         expander = KeywordExpander("test-expander", {"use_mock_data": True})
 
-        result = expander.execute(["metal hardware"])
+        result = expander.execute_impl(["metal hardware"])
         assert isinstance(result, list)
         assert len(result) > 1
 
@@ -200,7 +203,7 @@ class TestKeywordExpander:
         expander = KeywordExpander("test-expander")
 
         # 执行一些操作
-        expander.execute(["metal hardware"])
+        expander.execute_impl(["metal hardware"])
 
         stats = expander.get_statistics()
         assert isinstance(stats, dict)

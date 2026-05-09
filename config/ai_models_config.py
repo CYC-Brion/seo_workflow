@@ -4,27 +4,44 @@ AI模型配置
 """
 
 # 各节点AI模型配置
+# 如果有 Azure OpenAI，优先使用 Azure 部署；否则回退到标准 OpenAI
+# deployment_name 从环境变量 AZURE_OPENAI_DEPLOYMENT 读取
+import os as _os
+_azure_deployment = _os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
+_use_azure = bool(_os.getenv("AZURE_OPENAI_ENDPOINT", "")) and bool(_os.getenv("AZURE_OPENAI_API_KEY", ""))
+
 NODE_MODELS = {
+    "default": {
+        "provider": "azure" if _use_azure else "openai",
+        "model": _azure_deployment or "gpt-4o",
+        "temperature": 0.7,
+        "max_tokens": 4000,
+        "timeout": 60,
+        "cost_per_1k_tokens": 0.0025,
+    },
     "keyword_filter": {
-        "provider": "openai",
-        "model": "gpt-3.5-turbo",
+        "provider": "azure" if _use_azure else "openai",
+        "model": _azure_deployment or "gpt-4o-mini",
         "temperature": 0.3,
         "max_tokens": 1000,
-        "cost_per_1k_tokens": 0.0015,  # USD
+        "timeout": 60,
+        "cost_per_1k_tokens": 0.00015,  # USD
     },
     "title_generator": {
-        "provider": "openai",
-        "model": "gpt-4",
+        "provider": "azure" if _use_azure else "openai",
+        "model": _azure_deployment or "gpt-4o",
         "temperature": 0.7,
         "max_tokens": 500,
-        "cost_per_1k_tokens": 0.03,  # USD
+        "timeout": 90,
+        "cost_per_1k_tokens": 0.0025,  # USD
     },
     "content_generator": {
-        "provider": "openai",
-        "model": "gpt-4-turbo",
+        "provider": "azure" if _use_azure else "openai",
+        "model": _azure_deployment or "gpt-4o",
         "temperature": 0.8,
-        "max_tokens": 4000,
-        "cost_per_1k_tokens": 0.06,  # USD
+        "max_tokens": 8000,
+        "timeout": 600,
+        "cost_per_1k_tokens": 0.01,  # USD
     },
     "image_generator": {
         "provider": "openai",
@@ -36,29 +53,20 @@ NODE_MODELS = {
 }
 
 # 备用模型配置（主模型失败时使用）
-FALLBACK_MODELS = {
-    "keyword_filter": {
-        "provider": "anthropic",
-        "model": "claude-3-haiku",
-        "temperature": 0.3,
-        "max_tokens": 1000,
-    },
-    "title_generator": {
-        "provider": "anthropic",
-        "model": "claude-3-sonnet",
-        "temperature": 0.7,
-        "max_tokens": 500,
-    },
-    "content_generator": {
-        "provider": "anthropic",
-        "model": "claude-3-opus",
-        "temperature": 0.8,
-        "max_tokens": 4000,
-    }
-}
+# 留空表示不使用备用模型，AI 调用失败时将使用内置默认内容
+FALLBACK_MODELS = {}
 
 # 模型提供商API配置
 PROVIDER_CONFIGS = {
+    "azure": {
+        "api_key_env_var": "AZURE_OPENAI_API_KEY",
+        "base_url_env_var": "AZURE_OPENAI_ENDPOINT",
+        "default_base_url": "",
+        "timeout": 120,
+        "max_retries": 3,
+        "api_version_env_var": "AZURE_OPENAI_API_VERSION",
+        "default_api_version": "2024-12-01-preview",
+    },
     "openai": {
         "api_key_env_var": "OPENAI_API_KEY",
         "base_url_env_var": "OPENAI_BASE_URL",

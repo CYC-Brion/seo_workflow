@@ -8,8 +8,12 @@ import time
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
+from urllib.parse import quote, urljoin, urlparse
+from urllib.robotparser import RobotFileParser
+
 import requests
-from urllib.parse import quote
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from src.core import DataProcessingNode
 
@@ -26,6 +30,12 @@ class KeywordExpansionResult:
 
 class KeywordExpander(DataProcessingNode):
     """关键词扩展器"""
+
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
 
     def __init__(
         self,
@@ -61,6 +71,23 @@ class KeywordExpander(DataProcessingNode):
         # 检查是否配置了Google API
         self.has_google_api = bool(self.google_api_key and self.google_search_engine_id)
 
+        # 创建带指数退避重试的 requests Session
+        retry_strategy = Retry(
+            total=self.max_retries,
+            backoff_factor=self.request_delay_seconds,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session = requests.Session()
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+        self.session.headers.update({"User-Agent": self.USER_AGENT})
+
+        # 端点缓存 & robots.txt 缓存
+        self._last_successful_endpoint_idx = 0
+        self._robots_cache: Dict[str, bool] = {}
+
         # 模拟数据（用于测试）
         self.mock_expansions = self._load_mock_expansions()
 
@@ -83,6 +110,7 @@ class KeywordExpander(DataProcessingNode):
                 "has_google_api": self.has_google_api,
                 "use_mock_data": self.use_mock_data,
                 "enable_manual_fallback": self.enable_manual_fallback,
+                "max_retries": self.max_retries,
             }
         )
 
@@ -257,120 +285,102 @@ class KeywordExpander(DataProcessingNode):
         return keywords
 
     def _expand_keyword(self, keyword: str) -> List[str]:
-        """扩展单个关键词"""
-        expansions = []
+        """扩展单个关键词
 
-        # 尝试使用Google API
-        if self.has_google_api:
-            self.logger.debug(f"尝试使用Google API扩展: {keyword}")
-            try:
-                api_expansions = self._expand_with_google_api(keyword)
-                if api_expansions:
-                    expansions = api_expansions
-                    self.stats["api_requests"] += 1
-                    self.logger.debug(f"Google API扩展成功", keyword=keyword, count=len(expansions))
-                    return expansions
-            except Exception as e:
-                self.logger.warning(f"Google API扩展失败: {e}")
-
-        # 如果API失败或未配置，使用模拟数据
-        if self.use_mock_data:
-            self.logger.debug(f"使用模拟数据扩展: {keyword}")
-            mock_expansions = self._expand_with_mock_data(keyword)
-            if mock_expansions:
-                expansions = mock_expansions
-                self.stats["mock_expansions"] += len(expansions)
-                self.logger.debug(f"模拟数据扩展成功", keyword=keyword, count=len(expansions))
-
-        # 如果没有扩展结果，尝试生成基于模式的扩展
-        if not expansions:
-            self.logger.debug(f"生成模式扩展: {keyword}")
-            pattern_expansions = self._expand_with_patterns(keyword)
-            if pattern_expansions:
-                expansions = pattern_expansions
-                self.logger.debug(f"模式扩展成功", keyword=keyword, count=len(expansions))
-
-        # 限制扩展数量
-        if len(expansions) > self.max_expansions_per_keyword:
-            expansions = expansions[:self.max_expansions_per_keyword]
-
-        return expansions
-
-    def _expand_with_google_api(self, keyword: str) -> List[str]:
-        """使用Google搜索建议扩展关键词
-
-        优先使用Google Custom Search API（如果配置了API密钥），
-        否则使用Google搜索建议的公共JSON端点。
+        单一降级链：Custom Search API → Google Suggest → Mock → Patterns。
+        每个 fallback 只出现一次，避免重复调用。
         """
-        self.logger.debug(f"尝试使用Google搜索扩展关键词: {keyword}")
+        expansions: List[str] = []
 
-        expansions = []
-
-        # 如果有Google API密钥，使用Custom Search API
+        # 1. Google Custom Search API（需配置 API 密钥）
         if self.has_google_api:
+            self.logger.debug(f"尝试 Google Custom Search API: {keyword}")
             try:
-                api_expansions = self._expand_with_google_custom_search(keyword)
-                if api_expansions:
-                    expansions = api_expansions
-                    self.logger.debug(f"Google Custom Search API扩展成功",
-                                    keyword=keyword, count=len(expansions))
-                    return expansions
+                expansions = self._expand_with_google_custom_search(keyword)
+                if expansions:
+                    self.stats["api_requests"] += 1
+                    self.logger.debug(f"Custom Search API 成功", keyword=keyword, count=len(expansions))
+                    return expansions[:self.max_expansions_per_keyword]
             except Exception as e:
-                self.logger.warning(f"Google Custom Search API失败: {e}")
-                # 继续尝试使用公共API
+                self.logger.warning(f"Custom Search API 失败: {e}")
 
-        # 使用Google搜索建议的公共JSON端点
+        # 2. Google Suggest 公共端点
+        self.logger.debug(f"尝试 Google Suggest: {keyword}")
         try:
-            public_expansions = self._get_google_suggestions(keyword)
-            if public_expansions:
-                expansions = public_expansions
-                self.logger.debug(f"Google搜索建议扩展成功",
-                                keyword=keyword, count=len(expansions))
-                return expansions
+            expansions = self._get_google_suggestions(keyword)
+            if expansions:
+                self.logger.debug(f"Google Suggest 成功", keyword=keyword, count=len(expansions))
+                return expansions[:self.max_expansions_per_keyword]
         except Exception as e:
-            self.logger.warning(f"Google搜索建议获取失败: {e}")
-            # 继续使用模拟数据作为后备
+            self.logger.warning(f"Google Suggest 失败: {e}")
 
-        # 如果所有方法都失败，使用模拟数据
-        self.logger.debug(f"所有Google方法失败，使用模拟数据: {keyword}")
-        mock_expansions = self._expand_with_mock_data(keyword)
-        if mock_expansions:
-            expansions = mock_expansions
+        # 3. 模拟数据
+        if self.use_mock_data:
+            self.logger.debug(f"尝试模拟数据: {keyword}")
+            expansions = self._expand_with_mock_data(keyword)
+            if expansions:
+                self.stats["mock_expansions"] += len(expansions)
+                self.logger.debug(f"模拟数据成功", keyword=keyword, count=len(expansions))
+                return expansions[:self.max_expansions_per_keyword]
 
-        return expansions
+        # 4. 最终兜底：模式生成
+        self.logger.debug(f"使用模式兜底: {keyword}")
+        expansions = self._expand_with_patterns(keyword)
+        self.logger.debug(f"模式生成完成", keyword=keyword, count=len(expansions))
+        return expansions[:self.max_expansions_per_keyword]
+
+    def _check_robots_txt(self, url: str) -> bool:
+        """检查 robots.txt 是否允许抓取，结果按域名缓存"""
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+        if base_url in self._robots_cache:
+            return self._robots_cache[base_url]
+
+        try:
+            robots_url = urljoin(base_url, "/robots.txt")
+            response = self.session.get(robots_url, timeout=5)
+            if response.status_code == 200:
+                rp = RobotFileParser()
+                rp.parse(response.text.splitlines())
+                allowed = rp.can_fetch(self.USER_AGENT, url)
+                self._robots_cache[base_url] = allowed
+                return allowed
+        except Exception:
+            pass
+
+        self._robots_cache[base_url] = True
+        return True
 
     def _expand_with_google_custom_search(self, keyword: str) -> List[str]:
         """使用Google Custom Search API扩展关键词"""
+        url = "https://www.googleapis.com/customsearch/v1"
+
+        if not self._check_robots_txt(url):
+            self.logger.warning(f"robots.txt 禁止访问: {url}")
+            return []
+
         try:
-            # 构建API请求URL
-            url = "https://www.googleapis.com/customsearch/v1"
             params = {
                 "q": keyword,
                 "key": self.google_api_key,
                 "cx": self.google_search_engine_id,
-                "num": 10,  # 获取10个结果
-                "gl": "us",  # 国家/地区：美国
-                "hl": "en",  # 语言：英语
+                "num": 10,
+                "gl": "us",
+                "hl": "en",
             }
 
-            # 发送请求
-            response = requests.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
 
-            # 从搜索结果中提取关键词
             expansions = []
             if "items" in data:
                 for item in data["items"]:
                     title = item.get("title", "")
-                    snippet = item.get("snippet", "")
-
-                    # 从标题和摘要中提取相关短语
-                    # 可以添加更复杂的提取逻辑
                     if keyword.lower() in title.lower():
                         expansions.append(title)
 
-            # 限制数量
             return expansions[:self.max_expansions_per_keyword]
 
         except requests.exceptions.RequestException as e:
@@ -383,58 +393,56 @@ class KeywordExpander(DataProcessingNode):
     def _get_google_suggestions(self, keyword: str) -> List[str]:
         """获取Google搜索建议（下拉框推荐）
 
-        使用Google的搜索建议JSON端点获取相关搜索词。
+        多个端点依次尝试，缓存上次成功的端点以优化后续请求。
         """
-        try:
-            # 编码关键词
-            encoded_keyword = quote(keyword)
+        encoded_keyword = quote(keyword)
 
-            # Google搜索建议JSON端点
-            # 使用多个端点提高成功率
-            endpoints = [
-                f"https://suggestqueries.google.com/complete/search?client=firefox&q={encoded_keyword}",
-                f"https://suggestqueries.google.com/complete/search?client=chrome&q={encoded_keyword}",
-                f"https://www.google.com/complete/search?client=hp&q={encoded_keyword}",
-            ]
+        endpoints = [
+            f"https://suggestqueries.google.com/complete/search?client=firefox&q={encoded_keyword}",
+            f"https://suggestqueries.google.com/complete/search?client=chrome&q={encoded_keyword}",
+            f"https://www.google.com/complete/search?client=hp&q={encoded_keyword}",
+        ]
 
-            expansions = []
+        # 将上次成功的端点移到最前面
+        if 0 < self._last_successful_endpoint_idx < len(endpoints):
+            endpoints.insert(0, endpoints.pop(self._last_successful_endpoint_idx))
+            self._last_successful_endpoint_idx = 0
 
-            for endpoint in endpoints:
-                try:
-                    response = requests.get(endpoint, timeout=5, headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    })
-                    response.raise_for_status()
+        expansions: List[str] = []
 
-                    # 解析JSON响应
-                    data = response.json()
-                    if isinstance(data, list) and len(data) > 1:
-                        suggestions = data[1]  # 建议列表通常在第二个元素
-                        if isinstance(suggestions, list):
-                            expansions.extend(suggestions)
+        for i, endpoint in enumerate(endpoints):
+            if not self._check_robots_txt(endpoint):
+                self.logger.debug(f"robots.txt 禁止访问: {endpoint}")
+                continue
 
-                    # 如果成功获取，跳出循环
-                    if expansions:
-                        break
+            try:
+                response = self.session.get(endpoint, timeout=5)
+                response.raise_for_status()
 
-                except Exception as e:
-                    self.logger.debug(f"Google建议端点失败 {endpoint}: {e}")
-                    continue
+                data = response.json()
+                if isinstance(data, list) and len(data) > 1:
+                    suggestions = data[1]
+                    if isinstance(suggestions, list):
+                        expansions.extend(suggestions)
 
-            # 去重并限制数量
-            unique_expansions = []
-            seen = set()
-            for exp in expansions:
-                exp_lower = exp.lower()
-                if exp_lower not in seen and exp_lower != keyword.lower():
-                    seen.add(exp_lower)
-                    unique_expansions.append(exp)
+                if expansions:
+                    self._last_successful_endpoint_idx = i
+                    break
 
-            return unique_expansions[:self.max_expansions_per_keyword]
+            except Exception as e:
+                self.logger.debug(f"端点失败 {endpoint}: {e}")
+                continue
 
-        except Exception as e:
-            self.logger.warning(f"获取Google搜索建议失败: {e}")
-            return []
+        # 去重
+        unique_expansions: List[str] = []
+        seen: set = set()
+        for exp in expansions:
+            exp_lower = exp.lower()
+            if exp_lower not in seen and exp_lower != keyword.lower():
+                seen.add(exp_lower)
+                unique_expansions.append(exp)
+
+        return unique_expansions[:self.max_expansions_per_keyword]
 
     def _expand_with_mock_data(self, keyword: str) -> List[str]:
         """使用模拟数据扩展关键词"""

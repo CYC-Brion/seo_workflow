@@ -6,10 +6,10 @@ WordPress配置
 import os
 
 # WordPress站点配置
-WORDPRESS_URL = os.getenv("WORDPRESS_URL", "https://your-wordpress-site.com")
-WORDPRESS_USERNAME = os.getenv("WORDPRESS_USERNAME", "admin")
-WORDPRESS_PASSWORD = os.getenv("WORDPRESS_PASSWORD", "")
-WORDPRESS_APPLICATION_PASSWORD = os.getenv("WORDPRESS_APPLICATION_PASSWORD", "")
+WORDPRESS_URL = os.getenv("WORDPRESS_URL", "https://yushengco.com/")
+WORDPRESS_USERNAME = os.getenv("WORDPRESS_USERNAME", "caiyuecheng667@gmail.com")
+WORDPRESS_PASSWORD = os.getenv("WORDPRESS_PASSWORD", "20011227Cyc!")
+WORDPRESS_APPLICATION_PASSWORD = os.getenv("WORDPRESS_APPLICATION_PASSWORD", "vWV2 qTTf opW2 sk7Y BDsY FPVQ")
 
 # API端点
 WORDPRESS_API_URL = f"{WORDPRESS_URL}/wp-json/wp/v2"

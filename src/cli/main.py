@@ -9,9 +9,15 @@ from pathlib import Path
 from typing import Optional
 
 from src.utils import get_logger, config_manager
-from src.modules import ExcelProcessor
-from src.modules import AIKeywordFilter
-from src.core import WorkflowEngine
+from src.modules import (
+    ExcelProcessor,
+    KeywordExpander,
+    AIKeywordFilter,
+    AITitleGenerator,
+    AIContentGenerator,
+    WordPressPublisher,
+)
+from src.core import WorkflowEngine, StateManager, WorkflowState, WorkflowStatus
 
 
 logger = get_logger("cli")
@@ -264,16 +270,16 @@ def handle_config_check(args: argparse.Namespace) -> int:
 
         # 加载配置
         if not config_manager.load_all_configs():
-            print("❌ 配置加载失败")
+            print("[FAIL] 配置加载失败")
             return 1
 
-        print("✅ 配置加载成功")
+        print("[OK] 配置加载成功")
 
         # 检查API密钥
         api_status = config_manager.check_api_keys()
         print("\nAPI密钥状态:")
         for service, has_key in api_status.items():
-            status = "✅" if has_key else "❌"
+            status = "[OK]" if has_key else "[FAIL]"
             print(f"  {service}: {status}")
 
         # 检查目录
@@ -289,21 +295,21 @@ def handle_config_check(args: argparse.Namespace) -> int:
 
         for name, path in directories:
             if path.exists():
-                print(f"  {name}: ✅ ({path})")
+                print(f"  {name}: [OK] ({path})")
             else:
-                print(f"  {name}: ❌ 不存在 ({path})")
+                print(f"  {name}: [FAIL] 不存在 ({path})")
 
         # 测试API连接（如果启用）
         if args.test_api:
             print("\n测试API连接...")
             # 这里可以添加实际的API测试
-            print("  ⚠️ API测试功能尚未实现")
+            print("  [WARN] API测试功能尚未实现")
 
         print("\n配置检查完成")
         return 0
 
     except Exception as e:
-        print(f"❌ 配置检查失败: {e}")
+        print(f"[FAIL] 配置检查失败: {e}")
         logger.error("配置检查失败", exc_info=True)
         return 1
 
@@ -345,7 +351,7 @@ def handle_config_list(args: argparse.Namespace) -> int:
         return 0
 
     except Exception as e:
-        print(f"❌ 列出配置失败: {e}")
+        print(f"[FAIL] 列出配置失败: {e}")
         logger.error("列出配置失败", exc_info=True)
         return 1
 
@@ -366,7 +372,7 @@ def handle_excel_read(args: argparse.Namespace) -> int:
     try:
         file_path = Path(args.file)
         if not file_path.exists():
-            print(f"❌ 文件不存在: {file_path}")
+            print(f"[FAIL] 文件不存在: {file_path}")
             return 1
 
         print(f"读取Excel文件: {file_path}")
@@ -384,7 +390,7 @@ def handle_excel_read(args: argparse.Namespace) -> int:
         keywords = processor.execute_impl(file_path)
         stats = processor.get_statistics()
 
-        print(f"✅ 读取完成，共 {len(keywords)} 个关键词")
+        print(f"[OK] 读取完成，共 {len(keywords)} 个关键词")
         print(f"  总行数: {stats['total_rows']}")
         print(f"  有效关键词: {stats['valid_keywords']}")
         print(f"  无效关键词: {stats['invalid_keywords']}")
@@ -422,7 +428,7 @@ def handle_excel_read(args: argparse.Namespace) -> int:
         return 0
 
     except Exception as e:
-        print(f"❌ 读取Excel失败: {e}")
+        print(f"[FAIL] 读取Excel失败: {e}")
         logger.error("读取Excel失败", exc_info=True)
         return 1
 
@@ -432,7 +438,7 @@ def handle_excel_validate(args: argparse.Namespace) -> int:
     try:
         file_path = Path(args.file)
         if not file_path.exists():
-            print(f"❌ 文件不存在: {file_path}")
+            print(f"[FAIL] 文件不存在: {file_path}")
             return 1
 
         print(f"验证Excel文件: {file_path}")
@@ -447,14 +453,14 @@ def handle_excel_validate(args: argparse.Namespace) -> int:
         is_valid = processor.validate_input(file_path)
 
         if is_valid:
-            print("✅ 文件验证通过")
+            print("[OK] 文件验证通过")
             return 0
         else:
-            print("❌ 文件验证失败")
+            print("[FAIL] 文件验证失败")
             return 1
 
     except Exception as e:
-        print(f"❌ 验证Excel失败: {e}")
+        print(f"[FAIL] 验证Excel失败: {e}")
         logger.error("验证Excel失败", exc_info=True)
         return 1
 
@@ -516,7 +522,7 @@ def handle_filter_run(args: argparse.Namespace) -> int:
         filtered_keywords = filter_node.execute_impl(keywords)
         stats = filter_node.get_statistics()
 
-        print(f"✅ 筛选完成")
+        print(f"[OK] 筛选完成")
         print(f"  原始关键词: {stats['total_keywords']}")
         print(f"  相关关键词: {stats['relevant_keywords']}")
         print(f"  不相关关键词: {stats['irrelevant_keywords']}")
@@ -546,7 +552,7 @@ def handle_filter_run(args: argparse.Namespace) -> int:
         return 0
 
     except Exception as e:
-        print(f"❌ AI关键词筛选失败: {e}")
+        print(f"[FAIL] AI关键词筛选失败: {e}")
         logger.error("AI关键词筛选失败", exc_info=True)
         return 1
 
@@ -572,52 +578,397 @@ def handle_workflow(args: argparse.Namespace) -> int:
         return 1
 
 
-def handle_workflow_run(args: argparse.Namespace) -> int:
-    """处理workflow run命令"""
+def _save_workflow_state(engine: WorkflowEngine, state_manager: StateManager, name: str) -> Optional[str]:
+    """保存工作流状态到磁盘，返回保存的 workflow_id"""
     try:
-        print("运行工作流...")
-        print("⚠️ 工作流运行功能尚未完全实现")
+        result = engine.get_result()
+        if result:
+            state = state_manager.create_state_from_result(result)
+            state.workflow_name = name
+            state_manager.save_workflow_state(state)
+            return result.workflow_id
+    except Exception as e:
+        logger.warning(f"保存工作流状态失败: {e}")
+    return None
 
-        # 这里可以添加实际的工作流执行逻辑
-        # 目前只演示基本流程
 
-        if args.dry_run:
-            print("试运行模式，跳过实际执行")
-            return 0
+def handle_workflow_run(args: argparse.Namespace) -> int:
+    """处理workflow run命令 — 执行完整的6节点SEO内容自动化管线"""
+    try:
+        input_path = Path(args.input)
+        if not input_path.exists():
+            print(f"[FAIL] 输入文件不存在: {input_path}")
+            return 1
 
-        # 创建简单的工作流示例
-        workflow = WorkflowEngine("seo-workflow-cli")
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 这里可以添加实际的工作流节点
-        # 目前只是演示
+        dry_run = args.dry_run
+        if dry_run:
+            print("=" * 60)
+            print("  DRY-RUN 模式 — 跳过 AI 调用和 WordPress 发布")
+            print("=" * 60)
 
-        print(f"工作流创建成功: {workflow.workflow_id}")
-        print("使用 'seo-workflow workflow status' 查看状态")
+        # 初始化 StateManager
+        state_manager = StateManager()
+
+        # 创建 WorkflowEngine（用于状态跟踪）
+        engine = WorkflowEngine("seo-workflow-cli")
+        print(f"\n工作流引擎已创建: {engine.workflow_id}\n")
+
+        # ============================
+        # 步骤 1: Excel 读取关键词
+        # ============================
+        step = 1
+        total_steps = 6
+        print(f"[{step}/{total_steps}] 读取 Excel 关键词...")
+        excel_processor = ExcelProcessor("excel_reader", config={})
+        result = excel_processor.execute(input_path)
+        if result.status.value != "completed":
+            print(f"  [FAIL] Excel 读取失败: {result.error_message}")
+            return 1
+        keywords: list = result.output_data
+        print(f"  [OK] 读取到 {len(keywords)} 个关键词")
+        if keywords:
+            print(f"  预览: {keywords[:5]}{'...' if len(keywords) > 5 else ''}")
+
+        # ============================
+        # 步骤 2: 关键词扩展
+        # ============================
+        step += 1
+        print(f"\n[{step}/{total_steps}] 扩展关键词...")
+        expander_config = {
+            "use_mock_data": dry_run,
+            "max_expansions_per_keyword": 10,
+            "request_delay_seconds": 2,
+            "enable_manual_fallback": True,
+        }
+        expander = KeywordExpander("keyword_expander", config=expander_config)
+        result = expander.execute(keywords)
+        if result.status.value != "completed":
+            print(f"  [FAIL] 关键词扩展失败: {result.error_message}")
+            return 1
+        expanded_keywords: list = result.output_data
+        expander_stats = expander.get_statistics()
+        print(f"  [OK] 扩展完成: {len(keywords)} → {len(expanded_keywords)} 个关键词")
+        print(f"  API请求: {expander_stats.get('api_requests', 0)}, "
+              f"模拟扩展: {expander_stats.get('mock_expansions', 0)}, "
+              f"手动扩展: {expander_stats.get('manual_expansions', 0)}")
+
+        # ============================
+        # 步骤 3: AI 关键词筛选
+        # ============================
+        step += 1
+        print(f"\n[{step}/{total_steps}] AI 关键词筛选...")
+        if dry_run:
+            print("  [SKIP]  DRY-RUN: 跳过AI筛选，保留所有关键词")
+            filtered_keywords = expanded_keywords
+        else:
+            filter_node = AIKeywordFilter("keyword_filter", config={
+                "batch_size": 50,
+                "confidence_threshold": 0.7,
+                "enable_fallback": True,
+            })
+            result = filter_node.execute(expanded_keywords)
+            if result.status.value != "completed":
+                print(f"  [WARN]  AI筛选未完全成功: {result.error_message}")
+                filtered_keywords = expanded_keywords
+            else:
+                filtered_keywords = result.output_data
+            filter_stats = filter_node.get_statistics()
+            print(f"  相关: {filter_stats.get('relevant_keywords', '?')}, "
+                  f"不相关: {filter_stats.get('irrelevant_keywords', '?')}")
+        print(f"  [OK] 筛选后: {len(filtered_keywords)} 个关键词")
+
+        if not filtered_keywords:
+            print("  [FAIL] 筛选后无关键词，工作流终止")
+            return 1
+
+        # ============================
+        # 步骤 4: AI 标题生成
+        # ============================
+        step += 1
+        print(f"\n[{step}/{total_steps}] AI 标题生成...")
+        if dry_run:
+            print("  [SKIP]  DRY-RUN: 使用默认标题")
+            titles = [f"Complete Guide to {kw}" for kw in filtered_keywords]
+        else:
+            title_generator = AITitleGenerator("title_generator", config={
+                "batch_size": 10,
+                "max_titles_per_keyword": 1,
+                "enable_fallback": True,
+            })
+            result = title_generator.execute(filtered_keywords)
+            if result.status.value != "completed":
+                print(f"  [WARN]  标题生成未完全成功，使用默认标题")
+                titles = [f"Complete Guide to {kw}" for kw in filtered_keywords]
+            else:
+                titles = result.output_data
+        print(f"  [OK] 生成 {len(titles)} 个标题")
+        if titles:
+            print(f"  预览: {titles[0][:80]}...")
+
+        # ============================
+        # 步骤 5: AI 内容生成
+        # ============================
+        step += 1
+        print(f"\n[{step}/{total_steps}] AI 内容生成...")
+        # 构建 content_generator 的输入格式
+        content_inputs = []
+        for i, title in enumerate(titles):
+            kw = filtered_keywords[i] if i < len(filtered_keywords) else ""
+            content_inputs.append({"keyword": kw, "title": title})
+
+        if dry_run:
+            print("  [SKIP]  DRY-RUN: 使用默认内容")
+            contents = [
+                f"<article><h2>{inp['title']}</h2><p>This is placeholder content for {inp['keyword']}. "
+                f"In production mode, this would be a ~1500 word SEO-optimized article.</p></article>"
+                for inp in content_inputs
+            ]
+        else:
+            content_generator = AIContentGenerator("content_generator", config={
+                "batch_size": 3,
+                "target_word_count": 1500,
+                "html_format": True,
+                "enable_fallback": True,
+            })
+            result = content_generator.execute(content_inputs)
+            if result.status.value != "completed":
+                print(f"  [WARN]  内容生成未完全成功，使用默认内容")
+                contents = [
+                    f"<article><h2>{inp['title']}</h2><p>Fallback content for {inp['keyword']}.</p></article>"
+                    for inp in content_inputs
+                ]
+            else:
+                contents = result.output_data
+        print(f"  [OK] 生成 {len(contents)} 篇文章")
+        for i, c in enumerate(contents[:2]):
+            print(f"  文章 {i+1}: {len(c)} 字符, 预览: {c[:100]}...")
+
+        # ============================
+        # 步骤 6: WordPress 发布
+        # ============================
+        step += 1
+        print(f"\n[{step}/{total_steps}] WordPress 发布...")
+        # 构建 WordPress 发布输入
+        article_meta = getattr(content_generator, '_article_meta', {}) if not dry_run else {}
+        wp_inputs = []
+        for i, title in enumerate(titles):
+            kw = filtered_keywords[i] if i < len(filtered_keywords) else ""
+            content = contents[i] if i < len(contents) else ""
+            meta = article_meta.get(content, {})
+            wp_inputs.append({
+                "title": title,
+                "content": content,
+                "keyword": kw,
+                "slug": meta.get("slug", ""),
+                "excerpt": meta.get("excerpt", ""),
+            })
+
+        if dry_run:
+            print("  [SKIP]  DRY-RUN: 跳过 WordPress 发布")
+            print(f"  将发布 {len(wp_inputs)} 篇文章（草稿状态）")
+            publish_results = [
+                {"post_id": None, "title": inp["title"], "status": "draft", "url": "(dry-run)"}
+                for inp in wp_inputs
+            ]
+        else:
+            try:
+                publisher = WordPressPublisher("wordpress_publisher", config={
+                    "batch_size": 5,
+                    "api_type": "rest",
+                    "default_status": "draft",
+                    "auto_create_categories": False,
+                    "auto_create_tags": False,
+                    "enable_media_upload": False,
+                })
+                result = publisher.execute(wp_inputs)
+                if result.status.value == "completed":
+                    publish_results = result.output_data
+                else:
+                    print(f"  [WARN]  发布未完全成功: {result.error_message}")
+                    publish_results = [
+                        {"post_id": None, "title": inp["title"], "status": "failed", "url": ""}
+                        for inp in wp_inputs
+                    ]
+            except Exception as wp_err:
+                print(f"  [WARN]  WordPress 连接失败: {wp_err}")
+                print(f"  文章内容已生成，可稍后手动发布")
+                publish_results = [
+                    {"post_id": None, "title": inp["title"], "status": "skipped", "url": ""}
+                    for inp in wp_inputs
+                ]
+
+        # 统计发布结果
+        published = sum(1 for r in publish_results if r.get("post_id"))
+        drafts = sum(1 for r in publish_results if r.get("status") == "draft")
+        failed = sum(1 for r in publish_results if r.get("status") in ("failed", "skipped"))
+        print(f"  [OK] 发布完成: {published} 已发布, {drafts} 草稿, {failed} 跳过/失败")
+
+        # ============================
+        # 保存结果
+        # ============================
+        print(f"\n保存结果到 {output_dir}...")
+        output_data = {
+            "workflow_id": engine.workflow_id,
+            "input_file": str(input_path),
+            "dry_run": dry_run,
+            "steps": {
+                "1_excel_keywords": {"count": len(keywords), "data": keywords},
+                "2_expanded_keywords": {"count": len(expanded_keywords), "data": expanded_keywords},
+                "3_filtered_keywords": {"count": len(filtered_keywords), "data": filtered_keywords},
+                "4_titles": {"count": len(titles), "data": titles},
+                "5_contents": {"count": len(contents),
+                               "data": [c[:200] + "..." for c in contents]},  # 截断预览
+                "6_publish_results": publish_results,
+            },
+        }
+        results_file = output_dir / f"workflow_{engine.workflow_id}.json"
+        with open(results_file, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+        print(f"  [OK] 结果已保存: {results_file}")
+
+        # 保存完整文章到单独文件
+        articles_dir = output_dir / "articles"
+        articles_dir.mkdir(exist_ok=True)
+        for i, (inp, content) in enumerate(zip(wp_inputs, contents)):
+            safe_title = "".join(c for c in inp["title"][:50] if c.isalnum() or c in " _-").strip()
+            article_file = articles_dir / f"{i+1:03d}_{safe_title}.html"
+            with open(article_file, "w", encoding="utf-8") as f:
+                f.write(f"<!-- Title: {inp['title']} -->\n")
+                f.write(f"<!-- Keyword: {inp['keyword']} -->\n")
+                f.write(content)
+        print(f"  [OK] {len(contents)} 篇文章已保存: {articles_dir}")
+
+        # 保存工作流状态
+        state_manager = StateManager()
+        workflow_id = _save_workflow_state(engine, state_manager, "seo-workflow-cli")
+
+        # ============================
+        # 打印摘要
+        # ============================
+        print(f"\n{'=' * 60}")
+        print(f"  工作流执行完成!")
+        print(f"  Workflow ID: {engine.workflow_id}")
+        print(f"  关键词: {len(keywords)} → 扩展 {len(expanded_keywords)} → 筛选 {len(filtered_keywords)}")
+        print(f"  生成: {len(titles)} 标题, {len(contents)} 篇文章")
+        print(f"  发布: {published} 已发布, {drafts} 草稿, {failed} 跳过")
+        print(f"  输出目录: {output_dir}")
+        print(f"{'=' * 60}")
 
         return 0
 
     except Exception as e:
-        print(f"❌ 工作流运行失败: {e}")
+        print(f"[FAIL] 工作流运行失败: {e}")
         logger.error("工作流运行失败", exc_info=True)
         return 1
 
 
 def handle_workflow_status(args: argparse.Namespace) -> int:
-    """处理workflow status命令"""
-    print("工作流状态功能尚未实现")
-    return 0
+    """处理workflow status命令 — 查看最近一次工作流状态"""
+    try:
+        state_manager = StateManager()
+
+        if args.workflow_id:
+            state = state_manager.load_workflow_state(args.workflow_id)
+            if not state:
+                print(f"[FAIL] 未找到工作流: {args.workflow_id}")
+                return 1
+            states_to_show = [state]
+        else:
+            all_states = state_manager.list_workflow_states(limit=1)
+            if not all_states:
+                print("没有找到已保存的工作流状态")
+                print("运行 'python -m src.cli.main workflow run <excel文件>' 来执行工作流")
+                return 0
+            # 取最新的一条
+            latest = all_states[0]
+            state = state_manager.load_workflow_state(latest.get("workflow_id", ""))
+            if not state:
+                print("[FAIL] 无法加载工作流状态")
+                return 1
+            states_to_show = [state]
+
+        for s in states_to_show:
+            print(f"\n工作流状态")
+            print(f"  ID:       {s.workflow_id}")
+            print(f"  名称:     {s.workflow_name}")
+            print(f"  状态:     {s.status.value}")
+            print(f"  开始时间: {s.start_time}")
+            print(f"  结束时间: {s.end_time}")
+            print(f"  耗时:     {s.execution_time:.1f}s" if s.execution_time else "")
+            if s.node_states:
+                print(f"  节点状态:")
+                for node_id, node_info in s.node_states.items():
+                    status = node_info.get("status", "unknown")
+                    icon = {"completed": "[OK]", "failed": "[FAIL]", "running": "[RUN]"}.get(status, "[WAIT]")
+                    print(f"    {icon} {node_id}: {status}")
+
+        return 0
+
+    except Exception as e:
+        print(f"[FAIL] 查询工作流状态失败: {e}")
+        logger.error("查询工作流状态失败", exc_info=True)
+        return 1
 
 
 def handle_workflow_list(args: argparse.Namespace) -> int:
-    """处理workflow list命令"""
-    print("工作流列表功能尚未实现")
-    return 0
+    """处理workflow list命令 — 列出所有已保存的工作流"""
+    try:
+        state_manager = StateManager()
+        states = state_manager.list_workflow_states(limit=50)
+
+        if not states:
+            print("没有找到已保存的工作流状态")
+            return 0
+
+        print(f"\n{'ID':<38} {'名称':<25} {'状态':<12} {'时间'}")
+        print("-" * 95)
+        for s in states:
+            wid = s.get("workflow_id", "")[:36]
+            name = s.get("workflow_name", "")[:23]
+            status = s.get("status", "")
+            start = s.get("start_time", "")
+            if isinstance(start, str) and len(start) > 19:
+                start = start[:19]
+            print(f"{wid:<38} {name:<25} {status:<12} {start}")
+
+        print(f"\n共 {len(states)} 条记录")
+        return 0
+
+    except Exception as e:
+        print(f"[FAIL] 列出工作流失败: {e}")
+        logger.error("列出工作流失败", exc_info=True)
+        return 1
 
 
 def handle_workflow_cancel(args: argparse.Namespace) -> int:
-    """处理workflow cancel命令"""
-    print("工作流取消功能尚未实现")
-    return 0
+    """处理workflow cancel命令 — 取消指定工作流"""
+    try:
+        state_manager = StateManager()
+        state = state_manager.load_workflow_state(args.workflow_id)
+
+        if not state:
+            print(f"[FAIL] 未找到工作流: {args.workflow_id}")
+            return 1
+
+        if state.status == WorkflowStatus.COMPLETED:
+            print(f"工作流 {args.workflow_id} 已经完成，无法取消")
+            return 0
+        elif state.status == WorkflowStatus.CANCELLED:
+            print(f"工作流 {args.workflow_id} 已经被取消")
+            return 0
+
+        state.status = WorkflowStatus.CANCELLED
+        state_manager.save_workflow_state(state)
+        print(f"[OK] 工作流 {args.workflow_id} 已取消")
+        return 0
+
+    except Exception as e:
+        print(f"[FAIL] 取消工作流失败: {e}")
+        logger.error("取消工作流失败", exc_info=True)
+        return 1
 
 
 def handle_tools(args: argparse.Namespace) -> int:
@@ -691,7 +1042,7 @@ def main(argv: Optional[list] = None) -> int:
             import traceback
             traceback.print_exc()
         else:
-            print(f"❌ 执行失败: {e}")
+            print(f"[FAIL] 执行失败: {e}")
         return 1
 
 

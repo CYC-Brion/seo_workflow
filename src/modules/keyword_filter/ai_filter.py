@@ -144,7 +144,11 @@ class AIKeywordFilter(AINode):
                 self.stats["batches_processed"] += 1
 
             except Exception as e:
-                self.logger.error(f"批次处理失败: {e}")
+                self.logger.error(
+                    f"[AI调用失败] 关键词筛选节点无法连接 AI 服务。"
+                    f"请检查 .env 中的 AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT 或 OPENAI_API_KEY 是否正确。"
+                    f"原始错误: {e}"
+                )
                 # 如果启用备用模型，尝试使用备用模型
                 if self.enable_fallback:
                     self.logger.info("尝试使用备用模型")
@@ -153,18 +157,21 @@ class AIKeywordFilter(AINode):
                         all_results = self._merge_results(all_results, batch_result)
                         self.stats["batches_processed"] += 1
                     except Exception as fallback_error:
-                        self.logger.error(f"备用模型也失败: {fallback_error}")
+                        self.logger.error(
+                            f"[备用模型失败] 未配置 Anthropic 等备用模型，使用默认策略（保留所有关键词）。"
+                            f"如需备用模型，请在 config/ai_models_config.py 的 FALLBACK_MODELS 中配置。"
+                        )
                         # 保留所有关键词作为相关关键词（跳过筛选）
                         all_results.relevant_keywords.extend(batch)
                         for kw in batch:
                             all_results.confidence_scores[kw] = 0.5
-                            all_results.filter_reasons[kw] = "筛选失败，默认保留"
+                            all_results.filter_reasons[kw] = "AI 调用失败，默认保留"
                 else:
                     # 保留所有关键词作为相关关键词
                     all_results.relevant_keywords.extend(batch)
                     for kw in batch:
                         all_results.confidence_scores[kw] = 0.5
-                        all_results.filter_reasons[kw] = "筛选失败，默认保留"
+                        all_results.filter_reasons[kw] = "AI 调用失败，默认保留"
 
         # 应用置信度阈值
         filtered_keywords = self._apply_confidence_threshold(all_results)

@@ -39,6 +39,7 @@ except ImportError:
 
 class AIProvider(Enum):
     """AI提供商"""
+    AZURE = "azure"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"  # 预留
@@ -399,6 +400,198 @@ class OpenAIClient(AIClient):
             yield content[i:i + chunk_size]
 
 
+class AzureOpenAIClient(AIClient):
+    """Azure OpenAI 客户端"""
+
+    def __init__(
+        self,
+        provider: AIProvider,
+        model: str,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_version: Optional[str] = None,
+        timeout: int = 30,
+        max_retries: int = 3,
+        logger_name: Optional[str] = None,
+    ):
+        self.api_version = api_version or "2024-12-01-preview"
+        super().__init__(provider, model, api_key, base_url, timeout, max_retries, logger_name)
+
+    def _init_client(self) -> None:
+        if not OPENAI_AVAILABLE:
+            raise ImportError("OpenAI库未安装，请运行: pip install openai")
+
+        self.client = openai.AzureOpenAI(
+            api_key=self.api_key,
+            azure_endpoint=self.base_url,
+            api_version=self.api_version,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+        )
+        self.logger.debug(f"Azure OpenAI 客户端初始化: endpoint={self.base_url}, deployment={self.model}")
+
+    def chat_completion(
+        self,
+        messages: List[AIMessage],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> AIResponse:
+        start_time = time.time()
+
+        try:
+            api_messages = [msg.to_dict() for msg in messages]
+
+            api_kwargs = {
+                "model": self.model,
+                "messages": api_messages,
+                "temperature": temperature,
+                "timeout": self.timeout,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                **kwargs
+            }
+
+            if max_tokens is not None:
+                api_kwargs["max_completion_tokens"] = max_tokens
+
+            stream = self.client.chat.completions.create(**api_kwargs)
+
+            content_parts = []
+            usage = {}
+            finish_reason = None
+            response_id = None
+
+            for chunk in stream:
+                if chunk.id:
+                    response_id = chunk.id
+                if chunk.usage:
+                    usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens,
+                        "completion_tokens": chunk.usage.completion_tokens,
+                        "total_tokens": chunk.usage.total_tokens,
+                    }
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        content_parts.append(delta.content)
+                    if chunk.choices[0].finish_reason:
+                        finish_reason = chunk.choices[0].finish_reason
+
+            content = "".join(content_parts)
+
+            if not usage:
+                usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+            config = config_manager.get_node_model_config("default")
+            cost = self.calculate_cost(usage, getattr(config, "cost_per_1k_tokens", None))
+
+            ai_response = AIResponse(
+                content=content,
+                model=self.model,
+                provider=self.provider,
+                usage=usage,
+                cost=cost,
+                response_time=time.time() - start_time,
+                metadata={
+                    "finish_reason": finish_reason,
+                    "id": response_id,
+                }
+            )
+
+            self.update_cost_tracking(ai_response)
+
+            self.logger.log_api_call(
+                service="azure_openai",
+                endpoint="chat.completions",
+                success=True,
+                duration_seconds=ai_response.response_time,
+                model=self.model,
+                tokens=usage["total_tokens"],
+                cost=cost
+            )
+
+            return ai_response
+
+        except openai.RateLimitError as e:
+            retry_after = getattr(e, 'retry_after', None)
+            raise RateLimitError(
+                provider=self.provider.value,
+                model=self.model,
+                retry_after=retry_after,
+                details={"error": str(e)}
+            )
+        except openai.BadRequestError as e:
+            if "maximum context length" in str(e).lower():
+                raise TokenLimitError(
+                    provider=self.provider.value,
+                    model=self.model,
+                    max_tokens=4096,
+                    requested_tokens=0,
+                    details={"error": str(e)}
+                )
+            raise APIError(
+                message=str(e),
+                provider=self.provider.value,
+                model=self.model,
+                status_code=400,
+                details={"error": str(e)}
+            )
+        except openai.APIError as e:
+            status_code = getattr(e, 'status_code', None)
+            raise APIError(
+                message=str(e),
+                provider=self.provider.value,
+                model=self.model,
+                status_code=status_code,
+                details={"error": str(e)}
+            )
+        except Exception as e:
+            raise AIError(
+                message=f"Azure OpenAI API调用失败: {str(e)}",
+                provider=self.provider.value,
+                model=self.model,
+                details={"error": str(e)},
+                cause=e
+            )
+
+    async def chat_completion_async(
+        self,
+        messages: List[AIMessage],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> AIResponse:
+        return self.chat_completion(messages, temperature, max_tokens, **kwargs)
+
+    def stream_chat_completion(
+        self,
+        messages: List[AIMessage],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> AsyncGenerator[str, None]:
+        api_messages = [msg.to_dict() for msg in messages]
+
+        api_kwargs = {
+            "model": self.model,
+            "messages": api_messages,
+            "temperature": temperature,
+            "timeout": self.timeout,
+            "stream": True,
+            **kwargs
+        }
+
+        if max_tokens is not None:
+            api_kwargs["max_completion_tokens"] = max_tokens
+
+        stream = self.client.chat.completions.create(**api_kwargs)
+
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+
 class AnthropicClient(AIClient):
     """Anthropic客户端"""
 
@@ -614,7 +807,26 @@ class AIClientFactory:
                     base_url = provider_config.default_base_url
 
         # 根据提供商创建客户端
-        if provider == AIProvider.OPENAI:
+        if provider == AIProvider.AZURE:
+            if not OPENAI_AVAILABLE:
+                raise ImportError("OpenAI库未安装")
+            provider_config = config_manager.get_provider_config(provider.value)
+            api_version = None
+            if hasattr(provider_config, 'api_version_env_var') and provider_config.api_version_env_var:
+                api_version = getattr(
+                    config_manager.project_config,
+                    provider_config.api_version_env_var.lower(),
+                    provider_config.default_api_version
+                )
+            return AzureOpenAIClient(
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                api_version=api_version,
+                **kwargs
+            )
+        elif provider == AIProvider.OPENAI:
             if not OPENAI_AVAILABLE:
                 raise ImportError("OpenAI库未安装")
             return OpenAIClient(
@@ -655,8 +867,8 @@ class AIClientFactory:
         return AIClientFactory.create_client(
             provider=model_config.provider,
             model=model_config.model,
-            timeout=model_config.get("timeout", 30),
-            max_retries=model_config.get("max_retries", 3),
+            timeout=getattr(model_config, "timeout", 30),
+            max_retries=getattr(model_config, "max_retries", 3),
         )
 
 
@@ -691,13 +903,21 @@ class AIClientManager:
                 # 获取备用模型配置
                 fallback_config = config_manager.get_fallback_model_config(node_name)
                 if not fallback_config:
-                    raise ValueError(f"节点 '{node_name}' 没有备用模型配置")
+                    self.logger.error(
+                        f"节点 '{node_name}' 未配置备用模型。"
+                        f"主模型调用失败时将使用内置默认内容。"
+                        f"请检查 Azure OpenAI / OpenAI 配置是否正确。"
+                    )
+                    raise ValueError(
+                        f"节点 '{node_name}' 没有备用模型配置，"
+                        f"且主模型调用失败。请检查 API 密钥和 Endpoint 配置。"
+                    )
 
                 client = self.factory.create_client(
                     provider=fallback_config.provider,
                     model=fallback_config.model,
-                    timeout=fallback_config.get("timeout", 30),
-                    max_retries=fallback_config.get("max_retries", 3),
+                    timeout=getattr(fallback_config, "timeout", 30),
+                    max_retries=getattr(fallback_config, "max_retries", 3),
                 )
             else:
                 # 获取主模型配置
@@ -756,6 +976,7 @@ __all__ = [
     # 客户端类
     "AIClient",
     "OpenAIClient",
+    "AzureOpenAIClient",
     "AnthropicClient",
 
     # 工厂和管理器

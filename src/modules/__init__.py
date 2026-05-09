@@ -4,20 +4,17 @@
 """
 
 from .excel_reader import ExcelProcessor
+from .keyword_expander import KeywordExpander
 from .keyword_filter import AIKeywordFilter
-
-# 其他模块将在后续添加
-# from .keyword_expander import ...
-# from .title_generator import ...
-# from .content_generator import ...
-# from .wordpress_integration import ...
+from .title_generator import AITitleGenerator
+from .content_generator import AIContentGenerator
+from .wordpress_integration import WordPressPublisher
 
 __all__ = [
-    # Excel读取模块
     "ExcelProcessor",
-
-    # AI关键词筛选模块
+    "KeywordExpander",
     "AIKeywordFilter",
-
-    # 其他模块将在后续添加
+    "AITitleGenerator",
+    "AIContentGenerator",
+    "WordPressPublisher",
 ]

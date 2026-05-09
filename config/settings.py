@@ -5,6 +5,9 @@
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 # 项目根目录
 BASE_DIR = Path(__file__).parent.parent
@@ -26,8 +29,14 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
 
+# Azure OpenAI 配置（优先于标准 OpenAI）
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+
 # 默认AI模型选择
-DEFAULT_AI_MODEL = "gpt-4"  # 可选: gpt-3.5-turbo, gpt-4, claude-3-opus等
+DEFAULT_AI_MODEL = "gpt-4o"  # 可选: gpt-4o-mini, gpt-4o, claude-3-5-sonnet 等
 
 # 工作流配置
 MAX_KEYWORDS_PER_BATCH = 100

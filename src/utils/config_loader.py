@@ -21,6 +21,8 @@ class AIModelConfig:
     model: str
     temperature: float
     max_tokens: int
+    timeout: int = 30
+    max_retries: int = 3
     cost_per_1k_tokens: Optional[float] = None
     cost_per_image: Optional[float] = None
     size: Optional[str] = None
@@ -34,6 +36,8 @@ class AIModelConfig:
             model=data.get("model", ""),
             temperature=data.get("temperature", 0.7),
             max_tokens=data.get("max_tokens", 1000),
+            timeout=data.get("timeout", 30),
+            max_retries=data.get("max_retries", 3),
             cost_per_1k_tokens=data.get("cost_per_1k_tokens"),
             cost_per_image=data.get("cost_per_image"),
             size=data.get("size"),
@@ -49,6 +53,8 @@ class ProviderConfig:
     default_base_url: str
     timeout: int
     max_retries: int
+    api_version_env_var: Optional[str] = None
+    default_api_version: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProviderConfig":
@@ -59,6 +65,8 @@ class ProviderConfig:
             default_base_url=data.get("default_base_url", ""),
             timeout=data.get("timeout", 30),
             max_retries=data.get("max_retries", 3),
+            api_version_env_var=data.get("api_version_env_var"),
+            default_api_version=data.get("default_api_version"),
         )
 
 
@@ -126,6 +134,11 @@ class ProjectConfig:
     openai_base_url: str
     anthropic_base_url: str
 
+    azure_openai_endpoint: str
+    azure_openai_api_key: str
+    azure_openai_deployment: str
+    azure_openai_api_version: str
+
     default_ai_model: str
     max_keywords_per_batch: int
     max_file_size_mb: int
@@ -157,6 +170,11 @@ class ProjectConfig:
             anthropic_api_key=data.get("ANTHROPIC_API_KEY", ""),
             openai_base_url=data.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             anthropic_base_url=data.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+
+            azure_openai_endpoint=data.get("AZURE_OPENAI_ENDPOINT", ""),
+            azure_openai_api_key=data.get("AZURE_OPENAI_API_KEY", ""),
+            azure_openai_deployment=data.get("AZURE_OPENAI_DEPLOYMENT", ""),
+            azure_openai_api_version=data.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
 
             default_ai_model=data.get("DEFAULT_AI_MODEL", "gpt-4"),
             max_keywords_per_batch=data.get("MAX_KEYWORDS_PER_BATCH", 100),
@@ -293,8 +311,11 @@ class ConfigManager:
 
         # 验证必要的API密钥
         if self._project_config:
-            if not self._project_config.openai_api_key and not self._project_config.anthropic_api_key:
-                errors.append("至少需要配置OpenAI或Anthropic API密钥")
+            has_openai = bool(self._project_config.openai_api_key)
+            has_azure = bool(self._project_config.azure_openai_api_key)
+            has_anthropic = bool(self._project_config.anthropic_api_key)
+            if not (has_openai or has_azure or has_anthropic):
+                errors.append("至少需要配置 OpenAI、Azure OpenAI 或 Anthropic 中的一种 API 密钥")
 
         if errors:
             error_msg = "配置验证失败: " + "; ".join(errors)
@@ -401,6 +422,7 @@ class ConfigManager:
 
         if self._project_config:
             result["openai"] = bool(self._project_config.openai_api_key)
+            result["azure"] = bool(self._project_config.azure_openai_api_key)
             result["anthropic"] = bool(self._project_config.anthropic_api_key)
 
         if self._wordpress_config:
