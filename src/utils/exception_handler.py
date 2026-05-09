@@ -249,13 +249,15 @@ class WorkflowError(WorkflowException):
         message: str,
         workflow_id: Optional[str] = None,
         node_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None
+        details: Optional[Dict[str, Any]] = None,
+        cause: Optional[Exception] = None
     ):
         super().__init__(
             message=message,
             error_code="WORKFLOW_ERROR",
             severity=ErrorSeverity.HIGH,
-            details={"workflow_id": workflow_id, "node_id": node_id, **(details or {})}
+            details={"workflow_id": workflow_id, "node_id": node_id, **(details or {})},
+            cause=cause
         )
 
 

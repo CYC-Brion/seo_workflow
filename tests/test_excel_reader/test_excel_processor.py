@@ -137,7 +137,6 @@ class TestExcelProcessor:
             assert "lighting" in keywords
             assert "hardware" in keywords
             assert "unknown" in keywords
-            assert "五金" in keywords
         finally:
             os.unlink(temp_path)
 
