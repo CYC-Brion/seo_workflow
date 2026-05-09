@@ -18,8 +18,15 @@ WORDPRESS_XMLRPC_URL = f"{WORDPRESS_URL}/xmlrpc.php"
 # 文章发布设置
 DEFAULT_POST_STATUS = "draft"  # draft, publish, pending, private
 DEFAULT_POST_TYPE = "post"     # post, page
-DEFAULT_CATEGORY_ID = 1        # 默认分类ID
+DEFAULT_CATEGORY_ID = 1022     # 默认分类ID: Technical Guides
 DEFAULT_TAG_IDS = []           # 默认标签ID列表
+
+# Category 映射 — AI 工作流生成的文���将发布到这些分类
+CATEGORY_MAPPING = {
+    "Technical Guides": 1022,
+    "Industry Insights": 1021,
+}
+DEFAULT_AI_CATEGORY = "Technical Guides"  # 未指定分类时的默认值
 
 # 媒体设置
 MEDIA_UPLOAD_PATH = "ai-generated"  # 媒体上传子目录

@@ -37,6 +37,15 @@ class KeywordExpander(DataProcessingNode):
         "Chrome/131.0.0.0 Safari/537.36"
     )
 
+    # Google / Bing 公共 suggest 端点
+    GOOGLE_SUGGEST_ENDPOINTS = [
+        "https://suggestqueries.google.com/complete/search?client=firefox&q={query}",
+        "https://suggestqueries.google.com/complete/search?client=chrome&q={query}",
+        "https://www.google.com/complete/search?client=hp&q={query}",
+    ]
+
+    BING_SUGGEST_ENDPOINT = "https://api.bing.com/osjson.aspx?query={query}"
+
     def __init__(
         self,
         node_id: str,
@@ -51,10 +60,9 @@ class KeywordExpander(DataProcessingNode):
                 - max_expansions_per_keyword: 每个关键词最大扩展数（默认: 10）
                 - request_delay_seconds: 请求延迟（秒，默认: 2）
                 - max_retries: 最大重试次数（默认: 3）
-                - use_mock_data: 是否使用模拟数据（默认: True，当API不可用时）
-                - enable_manual_fallback: 是否启用手动备用方案（默认: True）
                 - google_api_key: Google API密钥（可选）
                 - google_search_engine_id: Google搜索引擎ID（可选）
+                - http_proxy: HTTP 代理地址，如 http://127.0.0.1:7890（可选）
         """
         config = config or {}
         super().__init__(node_id, "keyword_expander", config)
@@ -63,10 +71,9 @@ class KeywordExpander(DataProcessingNode):
         self.max_expansions_per_keyword = config.get("max_expansions_per_keyword", 10)
         self.request_delay_seconds = config.get("request_delay_seconds", 2)
         self.max_retries = config.get("max_retries", 3)
-        self.use_mock_data = config.get("use_mock_data", True)
-        self.enable_manual_fallback = config.get("enable_manual_fallback", True)
         self.google_api_key = config.get("google_api_key")
         self.google_search_engine_id = config.get("google_search_engine_id")
+        self.http_proxy = config.get("http_proxy")
 
         # 检查是否配置了Google API
         self.has_google_api = bool(self.google_api_key and self.google_search_engine_id)
@@ -84,12 +91,17 @@ class KeywordExpander(DataProcessingNode):
         self.session.mount("http://", adapter)
         self.session.headers.update({"User-Agent": self.USER_AGENT})
 
-        # 端点缓存 & robots.txt 缓存
-        self._last_successful_endpoint_idx = 0
-        self._robots_cache: Dict[str, bool] = {}
+        # 配置代理
+        if self.http_proxy:
+            self.session.proxies = {
+                "http": self.http_proxy,
+                "https": self.http_proxy,
+            }
+            self.logger.info(f"代理已配置: {self.http_proxy}")
 
-        # 模拟数据（用于测试）
-        self.mock_expansions = self._load_mock_expansions()
+        # 端点缓存 & robots.txt 缓存
+        self._last_successful_google_endpoint_idx = 0
+        self._robots_cache: Dict[str, bool] = {}
 
         # 统计数据
         self.stats = {
@@ -98,8 +110,8 @@ class KeywordExpander(DataProcessingNode):
             "keywords_failed": 0,
             "total_expansions": 0,
             "api_requests": 0,
-            "manual_expansions": 0,
-            "mock_expansions": 0,
+            "google_suggest_requests": 0,
+            "bing_suggest_requests": 0,
             "retry_attempts": 0,
         }
 
@@ -108,69 +120,10 @@ class KeywordExpander(DataProcessingNode):
             config={
                 "max_expansions_per_keyword": self.max_expansions_per_keyword,
                 "has_google_api": self.has_google_api,
-                "use_mock_data": self.use_mock_data,
-                "enable_manual_fallback": self.enable_manual_fallback,
                 "max_retries": self.max_retries,
+                "http_proxy": self.http_proxy,
             }
         )
-
-    def _load_mock_expansions(self) -> Dict[str, List[str]]:
-        """加载模拟扩展数据"""
-        # 五金灯饰配件行业的模拟关键词扩展
-        mock_data = {
-            # 五金配件相关
-            "metal hardware": [
-                "metal hardware supplies",
-                "metal hardware manufacturers",
-                "metal hardware parts",
-                "industrial metal hardware",
-                "custom metal hardware",
-                "metal hardware tools",
-                "metal hardware accessories",
-                "metal hardware wholesale",
-                "metal hardware online",
-                "metal hardware catalog"
-            ],
-            "lighting accessories": [
-                "lighting accessories manufacturers",
-                "lighting accessories wholesale",
-                "lighting accessories online",
-                "led lighting accessories",
-                "home lighting accessories",
-                "outdoor lighting accessories",
-                "lighting accessories parts",
-                "lighting accessories catalog",
-                "custom lighting accessories",
-                "lighting accessories suppliers"
-            ],
-            "hardware processing": [
-                "hardware processing manufacturers",
-                "hardware processing services",
-                "cnc hardware processing",
-                "custom hardware processing",
-                "precision hardware processing",
-                "metal hardware processing",
-                "hardware processing technology",
-                "hardware processing equipment",
-                "hardware processing factory",
-                "hardware processing solutions"
-            ],
-            # 通用关键词
-            "industrial parts": [
-                "industrial parts manufacturers",
-                "industrial parts suppliers",
-                "industrial parts catalog",
-                "industrial parts wholesale",
-                "precision industrial parts",
-                "industrial machinery parts",
-                "industrial equipment parts",
-                "industrial replacement parts",
-                "industrial spare parts",
-                "industrial parts online"
-            ]
-        }
-
-        return mock_data
 
     def execute_impl(self, input_data: Any) -> Any:
         """执行关键词扩展
@@ -234,21 +187,7 @@ class KeywordExpander(DataProcessingNode):
                 self.logger.error(
                     f"关键词扩展异常: {keyword}",
                     error=str(e),
-                    expansion_method=expansion_result.metadata.get("expansion_method")
                 )
-
-                # 如果启用备用方案，尝试手动扩展
-                if self.enable_manual_fallback:
-                    self.logger.info(f"尝试手动备用方案: {keyword}")
-                    try:
-                        manual_expansions = self._get_manual_expansions(keyword)
-                        if manual_expansions:
-                            expansion_result.expanded_keywords.extend(manual_expansions)
-                            expansion_result.keyword_sources[keyword] = manual_expansions
-                            self.stats["manual_expansions"] += len(manual_expansions)
-                            self.logger.info(f"手动扩展成功", keyword=keyword, expansions=len(manual_expansions))
-                    except Exception as manual_error:
-                        self.logger.error(f"手动扩展也失败: {manual_error}")
 
         # 合并结果（原关键词 + 扩展关键词）
         all_keywords = self._merge_keywords(expansion_result)
@@ -287,10 +226,11 @@ class KeywordExpander(DataProcessingNode):
     def _expand_keyword(self, keyword: str) -> List[str]:
         """扩展单个关键词
 
-        单一降级链：Custom Search API → Google Suggest → Mock → Patterns。
-        每个 fallback 只出现一次，避免重复调用。
+        同时查询 Google Suggest + Bing Suggest（以及可选的 Google Custom Search API），
+        两个渠道都必须成功，任意失败即报错。合并去重后返回。
         """
-        expansions: List[str] = []
+        all_expansions: List[str] = []
+        errors: List[str] = []
 
         # 1. Google Custom Search API（需配置 API 密钥）
         if self.has_google_api:
@@ -299,35 +239,58 @@ class KeywordExpander(DataProcessingNode):
                 expansions = self._expand_with_google_custom_search(keyword)
                 if expansions:
                     self.stats["api_requests"] += 1
+                    all_expansions.extend(expansions)
                     self.logger.debug(f"Custom Search API 成功", keyword=keyword, count=len(expansions))
-                    return expansions[:self.max_expansions_per_keyword]
             except Exception as e:
-                self.logger.warning(f"Custom Search API 失败: {e}")
+                err_msg = f"Google Custom Search API: {e}"
+                self.logger.warning(err_msg)
+                errors.append(err_msg)
 
-        # 2. Google Suggest 公共端点
+        # 2. Google Suggest（必须成功）
         self.logger.debug(f"尝试 Google Suggest: {keyword}")
         try:
             expansions = self._get_google_suggestions(keyword)
-            if expansions:
-                self.logger.debug(f"Google Suggest 成功", keyword=keyword, count=len(expansions))
-                return expansions[:self.max_expansions_per_keyword]
+            if not expansions:
+                raise RuntimeError("Google Suggest 返回空结果")
+            self.stats["google_suggest_requests"] += 1
+            all_expansions.extend(expansions)
+            self.logger.debug(f"Google Suggest 成功", keyword=keyword, count=len(expansions))
         except Exception as e:
-            self.logger.warning(f"Google Suggest 失败: {e}")
+            err_msg = f"Google Suggest 失败: {e}"
+            self.logger.error(err_msg)
+            raise RuntimeError(
+                f"关键词 '{keyword}': Google Suggest 不可用 — {e}"
+                + ("\n  提示: 中国大陆需要配置 http_proxy 代理访问 Google"
+                   if not self.http_proxy else "")
+            ) from e
 
-        # 3. 模拟数据
-        if self.use_mock_data:
-            self.logger.debug(f"尝试模拟数据: {keyword}")
-            expansions = self._expand_with_mock_data(keyword)
-            if expansions:
-                self.stats["mock_expansions"] += len(expansions)
-                self.logger.debug(f"模拟数据成功", keyword=keyword, count=len(expansions))
-                return expansions[:self.max_expansions_per_keyword]
+        # 3. Bing Suggest（必须成功）
+        self.logger.debug(f"尝试 Bing Suggest: {keyword}")
+        try:
+            expansions = self._get_bing_suggestions(keyword)
+            if not expansions:
+                raise RuntimeError("Bing Suggest 返回空结果")
+            self.stats["bing_suggest_requests"] += 1
+            all_expansions.extend(expansions)
+            self.logger.debug(f"Bing Suggest 成功", keyword=keyword, count=len(expansions))
+        except Exception as e:
+            err_msg = f"Bing Suggest 失败: {e}"
+            self.logger.error(err_msg)
+            raise RuntimeError(
+                f"关键词 '{keyword}': Bing Suggest 不可用 — {e}"
+            ) from e
 
-        # 4. 最终兜底：模式生成
-        self.logger.debug(f"使用模式兜底: {keyword}")
-        expansions = self._expand_with_patterns(keyword)
-        self.logger.debug(f"模式生成完成", keyword=keyword, count=len(expansions))
-        return expansions[:self.max_expansions_per_keyword]
+        # 合并去重（Google + Bing 可能有重复建议）
+        unique: List[str] = []
+        seen: set = set()
+        kw_lower = keyword.lower()
+        for exp in all_expansions:
+            exp_lower = exp.lower()
+            if exp_lower not in seen and exp_lower != kw_lower:
+                seen.add(exp_lower)
+                unique.append(exp)
+
+        return unique[:self.max_expansions_per_keyword]
 
     def _check_robots_txt(self, url: str) -> bool:
         """检查 robots.txt 是否允许抓取，结果按域名缓存"""
@@ -404,9 +367,9 @@ class KeywordExpander(DataProcessingNode):
         ]
 
         # 将上次成功的端点移到最前面
-        if 0 < self._last_successful_endpoint_idx < len(endpoints):
-            endpoints.insert(0, endpoints.pop(self._last_successful_endpoint_idx))
-            self._last_successful_endpoint_idx = 0
+        if 0 < self._last_successful_google_endpoint_idx < len(endpoints):
+            endpoints.insert(0, endpoints.pop(self._last_successful_google_endpoint_idx))
+            self._last_successful_google_endpoint_idx = 0
 
         expansions: List[str] = []
 
@@ -426,7 +389,7 @@ class KeywordExpander(DataProcessingNode):
                         expansions.extend(suggestions)
 
                 if expansions:
-                    self._last_successful_endpoint_idx = i
+                    self._last_successful_google_endpoint_idx = i
                     break
 
             except Exception as e:
@@ -444,75 +407,35 @@ class KeywordExpander(DataProcessingNode):
 
         return unique_expansions[:self.max_expansions_per_keyword]
 
-    def _expand_with_mock_data(self, keyword: str) -> List[str]:
-        """使用模拟数据扩展关键词"""
-        keyword_lower = keyword.lower()
+    def _get_bing_suggestions(self, keyword: str) -> List[str]:
+        """获取Bing搜索建议（下拉框推荐）
 
-        # 检查是否有预定义的模拟扩展
-        for mock_keyword, expansions in self.mock_expansions.items():
-            if mock_keyword in keyword_lower or keyword_lower in mock_keyword:
-                # 返回相关的扩展
-                return expansions.copy()
-
-        # 如果没有匹配的模拟数据，生成通用扩展
-        return self._expand_with_patterns(keyword)
-
-    def _expand_with_patterns(self, keyword: str) -> List[str]:
-        """基于模式生成扩展关键词"""
-        expansions = []
-        keyword_lower = keyword.lower()
-
-        # 常见扩展模式
-        patterns = [
-            f"{keyword} manufacturers",
-            f"{keyword} suppliers",
-            f"{keyword} wholesale",
-            f"{keyword} online",
-            f"{keyword} catalog",
-            f"{keyword} parts",
-            f"{keyword} accessories",
-            f"{keyword} tools",
-            f"{keyword} equipment",
-            f"{keyword} solutions",
-            f"custom {keyword}",
-            f"precision {keyword}",
-            f"industrial {keyword}",
-            f"professional {keyword}",
-            f"quality {keyword}",
-        ]
-
-        # 添加一些变体
-        expansions.extend(patterns)
-
-        # 如果关键词包含特定行业术语，添加行业相关扩展
-        industry_terms = {
-            "metal": ["metal processing", "metal fabrication", "metal parts"],
-            "hardware": ["hardware tools", "hardware supplies", "hardware components"],
-            "lighting": ["led lighting", "lighting fixtures", "lighting systems"],
-            "accessories": ["accessories parts", "accessories components", "accessories kit"],
-        }
-
-        for term, term_expansions in industry_terms.items():
-            if term in keyword_lower:
-                expansions.extend(term_expansions)
-
-        # 去重
-        unique_expansions = []
-        seen = set()
-        for exp in expansions:
-            if exp.lower() not in seen:
-                seen.add(exp.lower())
-                unique_expansions.append(exp)
-
-        return unique_expansions[:self.max_expansions_per_keyword]
-
-    def _get_manual_expansions(self, keyword: str) -> List[str]:
-        """获取手动扩展关键词（备用方案）
-
-        在实际应用中，这里可以提供用户界面让用户手动输入扩展关键词
-        当前实现返回基于模式的扩展
+        使用 Bing osjson.aspx 公共端点（无需 API 密钥），
+        响应格式为 ["keyword", ["suggestion1", "suggestion2", ...]]。
         """
-        return self._expand_with_patterns(keyword)
+        encoded_keyword = quote(keyword)
+        url = self.BING_SUGGEST_ENDPOINT.format(query=encoded_keyword)
+
+        try:
+            response = self.session.get(url, timeout=5)
+            response.raise_for_status()
+
+            data = response.json()
+            if isinstance(data, list) and len(data) > 1:
+                suggestions = data[1]
+                if isinstance(suggestions, list) and suggestions:
+                    unique: List[str] = []
+                    seen: set = set()
+                    for s in suggestions:
+                        s_lower = s.lower()
+                        if s_lower not in seen and s_lower != keyword.lower():
+                            seen.add(s_lower)
+                            unique.append(s)
+                    return unique[:self.max_expansions_per_keyword]
+
+        except Exception as e:
+            self.logger.warning(f"Bing Suggest 请求失败: {e}")
+            raise
 
     def _merge_keywords(self, expansion_result: KeywordExpansionResult) -> List[str]:
         """合并原关键词和扩展关键词"""
@@ -557,8 +480,8 @@ class KeywordExpander(DataProcessingNode):
             keywords_failed=self.stats["keywords_failed"],
             total_expansions=self.stats["total_expansions"],
             api_requests=self.stats["api_requests"],
-            manual_expansions=self.stats["manual_expansions"],
-            mock_expansions=self.stats["mock_expansions"],
+            google_suggest_requests=self.stats["google_suggest_requests"],
+            bing_suggest_requests=self.stats["bing_suggest_requests"],
             original_count=expansion_stats.get("original_count", 0),
             expanded_count=expansion_stats.get("expanded_count", 0),
             unique_count=expansion_stats.get("unique_count", 0),

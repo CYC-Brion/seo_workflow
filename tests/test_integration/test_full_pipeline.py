@@ -121,6 +121,32 @@ class TestFullPipeline:
         mock_wp.upload_media.return_value = {"id": 500, "url": "https://example.com/wp-content/uploads/img.jpg"}
         return mock_wp
 
+    @staticmethod
+    def _mock_expander_google_suggest(expander: KeywordExpander):
+        """为 KeywordExpander 的 session.get 挂上 Google + Bing Suggest mock"""
+        def suggest_response(url, *args, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            import urllib.parse
+            if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+                query = qs.get("q", ["hardware"])[0]
+                resp.json.return_value = [
+                    query,
+                    [f"{query} manufacturers", f"{query} suppliers", f"{query} wholesale"]
+                ]
+            elif "api.bing.com" in url:
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+                query = qs.get("query", ["hardware"])[0]
+                resp.json.return_value = [
+                    query,
+                    [f"{query} parts", f"custom {query}"]
+                ]
+            else:
+                resp.json.return_value = ["", []]
+            return resp
+        expander.session.get = Mock(side_effect=suggest_response)
+
     @patch("src.modules.keyword_filter.ai_filter.get_ai_client")
     @patch("src.modules.title_generator.ai_title_generator.get_ai_client")
     @patch("src.modules.content_generator.ai_content_generator.get_ai_client")
@@ -160,8 +186,9 @@ class TestFullPipeline:
             # === 节点2: 关键词扩展 ===
             print("\n[2/6] 关键词扩展...")
             expander = KeywordExpander("keyword_expander", config={
-                "use_mock_data": True, "max_expansions_per_keyword": 5,
+                "max_expansions_per_keyword": 5,
             })
+            self._mock_expander_google_suggest(expander)
             result = expander.execute(keywords)
             assert result.status.value == "completed"
             expanded = result.output_data
@@ -269,10 +296,11 @@ class TestFullPipeline:
             })
             keywords = excel.execute_impl(str(excel_path))
 
-            # 节点2 — 使用 mock 数据
+            # 节点2 — 使用 Google Suggest mock
             expander = KeywordExpander("keyword_expander", config={
-                "use_mock_data": True, "max_expansions_per_keyword": 5,
+                "max_expansions_per_keyword": 5,
             })
+            self._mock_expander_google_suggest(expander)
             expanded = expander.execute_impl(keywords)
 
             # 节点3 — 跳过 AI，直接传递
@@ -384,8 +412,9 @@ class TestFullPipeline:
             assert len(keywords) == 1
 
             expander = KeywordExpander("keyword_expander", config={
-                "use_mock_data": True, "max_expansions_per_keyword": 3,
+                "max_expansions_per_keyword": 3,
             })
+            self._mock_expander_google_suggest(expander)
             expanded = expander.execute_impl(keywords)
             assert len(expanded) > 0
 

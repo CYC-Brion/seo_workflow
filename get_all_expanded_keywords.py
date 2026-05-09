@@ -51,10 +51,8 @@ def get_all_keywords():
         keyword_expander = KeywordExpander(
             node_id="keyword-expander-test",
             config={
-                "use_mock_data": True,  # 使用模拟数据
                 "max_expansions_per_keyword": 10,
                 "request_delay_seconds": 0,
-                "enable_manual_fallback": True
             }
         )
         expanded_keywords = keyword_expander.execute_impl(raw_keywords)

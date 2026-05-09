@@ -7,11 +7,37 @@ import os
 from pathlib import Path
 import pandas as pd
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 from src.modules.excel_reader.excel_processor import ExcelProcessor
 from src.modules.keyword_expander.keyword_expander import KeywordExpander
 from src.modules.keyword_filter.ai_filter import AIKeywordFilter
+
+
+def _mock_expander_google_suggest(expander: KeywordExpander):
+    """为 KeywordExpander 的 session.get 挂上 Google + Bing Suggest mock"""
+    def suggest_response(url, *args, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        import urllib.parse
+        if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            query = qs.get("q", ["hardware"])[0]
+            resp.json.return_value = [
+                query,
+                [f"{query} manufacturers", f"{query} suppliers", f"{query} wholesale"]
+            ]
+        elif "api.bing.com" in url:
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            query = qs.get("query", ["hardware"])[0]
+            resp.json.return_value = [
+                query,
+                [f"{query} parts", f"custom {query}"]
+            ]
+        else:
+            resp.json.return_value = ["", []]
+        return resp
+    expander.session.get = Mock(side_effect=suggest_response)
 
 
 class TestThreeNodeWorkflow:
@@ -60,14 +86,13 @@ class TestThreeNodeWorkflow:
             assert "metal hardware" in raw_keywords
             assert "lighting accessories" in raw_keywords
 
-            # 3. 关键词扩展节点（使用模拟数据）
+            # 3. 关键词扩展节点（Google Suggest mock）
             print("\n=== 步骤2: 关键词扩展 ===")
             keyword_expander = KeywordExpander("keyword-expander", {
-                "use_mock_data": True,
                 "max_expansions_per_keyword": 5,
                 "request_delay_seconds": 0,  # 测试时无需延迟
-                "enable_manual_fallback": False
             })
+            _mock_expander_google_suggest(keyword_expander)
             expanded_keywords = keyword_expander.execute_impl(raw_keywords)
             print(f"扩展后关键词数量: {len(expanded_keywords)}")
             print(f"扩展统计: {keyword_expander.get_statistics()}")
@@ -130,16 +155,13 @@ class TestThreeNodeWorkflow:
             raw_keywords = excel_processor.execute_impl(temp_path)
             assert raw_keywords == []
 
-            # 后续节点应该也能处理空列表
+            # 后续节点: 空关键词应直接跳过
             keyword_expander = KeywordExpander("keyword-expander", {
-                "use_mock_data": True
+                "max_expansions_per_keyword": 5
             })
-            expanded_keywords = keyword_expander.execute_impl(raw_keywords)
-            assert expanded_keywords == []
-
-            ai_filter = AIKeywordFilter("ai-filter")
-            filtered_keywords = ai_filter.execute_impl(expanded_keywords)
-            assert filtered_keywords == []
+            # 空列表触发 ValueError
+            with pytest.raises(ValueError):
+                keyword_expander.execute_impl(raw_keywords)
 
         finally:
             os.unlink(temp_path)
@@ -168,9 +190,9 @@ class TestThreeNodeWorkflow:
 
             # 关键词扩展
             keyword_expander = KeywordExpander("keyword-expander", {
-                "use_mock_data": True,
                 "max_expansions_per_keyword": 3
             })
+            _mock_expander_google_suggest(keyword_expander)
             expanded_keywords = keyword_expander.execute_impl(raw_keywords)
             assert len(expanded_keywords) > 1
 
@@ -217,8 +239,9 @@ class TestThreeNodeWorkflow:
             # 三个节点
             excel_processor = ExcelProcessor("excel-reader")
             keyword_expander = KeywordExpander("keyword-expander", {
-                "use_mock_data": True
+                "max_expansions_per_keyword": 5
             })
+            _mock_expander_google_suggest(keyword_expander)
             ai_filter = AIKeywordFilter("ai-filter")
 
             # 执行工作流
@@ -269,8 +292,9 @@ class TestThreeNodeWorkflow:
 
             excel_processor = ExcelProcessor("excel-reader")
             keyword_expander = KeywordExpander("keyword-expander", {
-                "use_mock_data": True
+                "max_expansions_per_keyword": 5
             })
+            _mock_expander_google_suggest(keyword_expander)
 
             # 执行工作流（AI出错时应回退到保留所有关键词）
             raw_keywords = excel_processor.execute_impl(temp_path)
@@ -304,11 +328,28 @@ def test_convenience_functions():
 
         # 测试关键词扩展便捷函数
         from src.modules.keyword_expander.keyword_expander import expand_keywords
-        expanded_keywords, expander_stats = expand_keywords(
-            test_keywords,
-            max_expansions_per_keyword=2,
-            use_mock_data=True
-        )
+        import urllib.parse as _up
+        with patch('requests.Session.get') as mock_get:
+            def suggest_response(url, *args, **kwargs):
+                resp = MagicMock()
+                resp.raise_for_status.return_value = None
+                if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                    qs = _up.parse_qs(_up.urlparse(url).query)
+                    query = qs.get("q", ["hardware"])[0]
+                    resp.json.return_value = [query, [f"{query} suppliers"]]
+                elif "api.bing.com" in url:
+                    qs = _up.parse_qs(_up.urlparse(url).query)
+                    query = qs.get("query", ["hardware"])[0]
+                    resp.json.return_value = [query, [f"{query} parts"]]
+                else:
+                    resp.json.return_value = ["", []]
+                return resp
+            mock_get.side_effect = suggest_response
+
+            expanded_keywords, expander_stats = expand_keywords(
+                test_keywords,
+                max_expansions_per_keyword=2,
+            )
         assert len(expanded_keywords) > len(test_keywords)
         assert "total_keywords" in expander_stats
 

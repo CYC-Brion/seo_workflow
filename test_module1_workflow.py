@@ -76,14 +76,12 @@ def test_keyword_expansion(keywords):
     print(f"输入关键词数量: {len(keywords)}")
 
     try:
-        # 创建关键词扩展器（使用模拟数据，避免需要Google API）
+        # 创建关键词扩展器（Google Suggest → Bing Suggest 真实数据）
         keyword_expander = KeywordExpander(
             node_id="keyword-expander-test",
             config={
-                "use_mock_data": True,  # 使用模拟数据
                 "max_expansions_per_keyword": 10,
                 "request_delay_seconds": 0,  # 测试时无需延迟
-                "enable_manual_fallback": True
             }
         )
 
@@ -98,7 +96,8 @@ def test_keyword_expansion(keywords):
         print(f"  扩展失败的关键词: {stats.get('keywords_failed', 'N/A')}")
         print(f"  总扩展数: {stats.get('total_expansions', 'N/A')}")
         print(f"  API请求次数: {stats.get('api_requests', 'N/A')}")
-        print(f"  模拟扩展数: {stats.get('mock_expansions', 'N/A')}")
+        print(f"  Google Suggest请求: {stats.get('google_suggest_requests', 'N/A')}")
+        print(f"  Bing Suggest请求: {stats.get('bing_suggest_requests', 'N/A')}")
 
         # 计算扩展率
         if stats.get('total_keywords', 0) > 0:

@@ -40,11 +40,15 @@ class ExcelProcessor(DataProcessingNode):
         # 配置参数
         self.sheet_name = config.get("sheet_name", 0)
         self.keyword_column = config.get("keyword_column", "keywords")
+        self.category_column = config.get("category_column", "category")
         self.header_row = config.get("header_row", 0)
         self.max_rows = config.get("max_rows")
         self.skip_empty = config.get("skip_empty", True)
         self.deduplicate = config.get("deduplicate", True)
         self.validate_keywords = config.get("validate_keywords", True)
+
+        # 关键词 → 分类映射
+        self.category_map: Dict[str, str] = {}
 
         # 统计数据
         self.stats = {
@@ -78,8 +82,9 @@ class ExcelProcessor(DataProcessingNode):
         # 读取Excel文件
         df = self._read_excel(file_path)
 
-        # 提取关键词
+        # 提取关键词和分类映射
         keywords = self._extract_keywords(df)
+        self._extract_categories(df)
 
         # 处理关键词
         processed_keywords = self._process_keywords(keywords)
@@ -223,6 +228,45 @@ class ExcelProcessor(DataProcessingNode):
         )
 
         return keywords
+
+    def _extract_categories(self, df: pd.DataFrame) -> None:
+        """从DataFrame中提取关键词→分类映射"""
+        from config.wordpress_config import CATEGORY_MAPPING, DEFAULT_AI_CATEGORY
+
+        self.category_map = {}
+        has_category_col = self.category_column in df.columns
+
+        if has_category_col:
+            for idx, row in df.iterrows():
+                keyword_val = row.get(self.keyword_column)
+                category_val = row.get(self.category_column)
+                if pd.notna(keyword_val) and pd.notna(category_val):
+                    keyword = str(keyword_val).strip()
+                    category = str(category_val).strip()
+                    if keyword and category:
+                        # 验证 category 名称是否在已知映射中
+                        if category in CATEGORY_MAPPING:
+                            self.category_map[keyword] = category
+                        else:
+                            self.logger.warning(
+                                f"未知分类 '{category}'，使用默认分类",
+                                keyword=keyword,
+                                valid_categories=list(CATEGORY_MAPPING.keys())
+                            )
+                            self.category_map[keyword] = DEFAULT_AI_CATEGORY
+
+        if self.category_map:
+            self.logger.info(
+                f"分类映射提取完成",
+                categorized_keywords=len(self.category_map),
+                has_category_column=has_category_col
+            )
+        else:
+            self.logger.debug("未检测到 category 列，所有关键词将使用默认分类")
+
+    def get_category(self, keyword: str) -> str:
+        """查询某个关键词的分类"""
+        return self.category_map.get(keyword, "")
 
     def _validate_keyword(self, keyword: str) -> tuple[bool, str]:
         """验证关键词格式"""

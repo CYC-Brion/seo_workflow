@@ -3,10 +3,11 @@ SEO工作流系统命令行接口
 """
 
 import argparse
+import os
 import sys
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from src.utils import get_logger, config_manager
 from src.modules import (
@@ -208,6 +209,12 @@ def setup_parser() -> argparse.ArgumentParser:
         "--resume",
         help="从保存的状态恢复执行"
     )
+    workflow_run_parser.add_argument(
+        "--schedule-hours",
+        type=float,
+        default=0,
+        help="定时发布：N小时后自动发布（0=立即存为草稿）。例如 --schedule-hours 24 表示24小时后发布"
+    )
 
     # workflow status
     workflow_status_parser = workflow_subparsers.add_parser(
@@ -234,6 +241,30 @@ def setup_parser() -> argparse.ArgumentParser:
     workflow_cancel_parser.add_argument(
         "workflow_id",
         help="工作流ID"
+    )
+
+    # workflow auto-publish
+    workflow_auto_publish_parser = workflow_subparsers.add_parser(
+        "auto-publish",
+        help="自动发布草稿：持续运行，每间隔N分钟发1篇"
+    )
+    workflow_auto_publish_parser.add_argument(
+        "--interval-minutes",
+        type=int,
+        default=60,
+        help="发布间隔（分钟），默认60"
+    )
+    workflow_auto_publish_parser.add_argument(
+        "--max-posts",
+        type=int,
+        default=0,
+        help="最多发布篇数（0=不限）"
+    )
+
+    # workflow publish-next
+    workflow_publish_next_parser = workflow_subparsers.add_parser(
+        "publish-next",
+        help="发布下一篇草稿（配合定时任务使用，每次运行发布1篇）"
     )
 
     # 工具命令
@@ -573,6 +604,10 @@ def handle_workflow(args: argparse.Namespace) -> int:
         return handle_workflow_list(args)
     elif args.workflow_command == "cancel":
         return handle_workflow_cancel(args)
+    elif args.workflow_command == "auto-publish":
+        return handle_workflow_auto_publish(args)
+    elif args.workflow_command == "publish-next":
+        return handle_workflow_publish_next(args)
     else:
         print("未知的workflow子命令")
         return 1
@@ -628,7 +663,13 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
             print(f"  [FAIL] Excel 读取失败: {result.error_message}")
             return 1
         keywords: list = result.output_data
-        print(f"  [OK] 读取到 {len(keywords)} 个关键词")
+        # 提取关键词→分类映射
+        original_categories: Dict[str, str] = getattr(excel_processor, 'category_map', {})
+        if original_categories:
+            cats = set(original_categories.values())
+            print(f"  [OK] 读取到 {len(keywords)} 个关键词, 分类: {cats}")
+        else:
+            print(f"  [OK] 读取到 {len(keywords)} 个关键词")
         if keywords:
             print(f"  预览: {keywords[:5]}{'...' if len(keywords) > 5 else ''}")
 
@@ -638,22 +679,37 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         step += 1
         print(f"\n[{step}/{total_steps}] 扩展关键词...")
         expander_config = {
-            "use_mock_data": dry_run,
             "max_expansions_per_keyword": 10,
             "request_delay_seconds": 2,
-            "enable_manual_fallback": True,
         }
+        http_proxy = os.getenv("HTTP_PROXY")
+        if http_proxy:
+            expander_config["http_proxy"] = http_proxy
         expander = KeywordExpander("keyword_expander", config=expander_config)
         result = expander.execute(keywords)
         if result.status.value != "completed":
             print(f"  [FAIL] 关键词扩展失败: {result.error_message}")
             return 1
         expanded_keywords: list = result.output_data
+
+        # 扩展关键词继承父关键词的分类
+        from config.wordpress_config import DEFAULT_AI_CATEGORY
+        keyword_categories: Dict[str, str] = {}
+        for ekw in expanded_keywords:
+            assigned = False
+            for okw, cat in original_categories.items():
+                if ekw == okw or ekw.startswith(okw + " "):
+                    keyword_categories[ekw] = cat
+                    assigned = True
+                    break
+            if not assigned:
+                keyword_categories[ekw] = DEFAULT_AI_CATEGORY
+
         expander_stats = expander.get_statistics()
         print(f"  [OK] 扩展完成: {len(keywords)} → {len(expanded_keywords)} 个关键词")
-        print(f"  API请求: {expander_stats.get('api_requests', 0)}, "
-              f"模拟扩展: {expander_stats.get('mock_expansions', 0)}, "
-              f"手动扩展: {expander_stats.get('manual_expansions', 0)}")
+        print(f"  Google API: {expander_stats.get('api_requests', 0)}, "
+              f"Google Suggest: {expander_stats.get('google_suggest_requests', 0)}, "
+              f"Bing Suggest: {expander_stats.get('bing_suggest_requests', 0)}")
 
         # ============================
         # 步骤 3: AI 关键词筛选
@@ -717,7 +773,8 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         content_inputs = []
         for i, title in enumerate(titles):
             kw = filtered_keywords[i] if i < len(filtered_keywords) else ""
-            content_inputs.append({"keyword": kw, "title": title})
+            cat = keyword_categories.get(kw, DEFAULT_AI_CATEGORY)
+            content_inputs.append({"keyword": kw, "title": title, "category": cat})
 
         if dry_run:
             print("  [SKIP]  DRY-RUN: 使用默认内容")
@@ -752,18 +809,35 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         step += 1
         print(f"\n[{step}/{total_steps}] WordPress 发布...")
         # 构建 WordPress 发布输入
+        from config.wordpress_config import CATEGORY_MAPPING
+        from datetime import datetime, timedelta, timezone
+
+        # 定时发布逻辑
+        schedule_hours = getattr(args, 'schedule_hours', 0) or 0
+        if schedule_hours > 0:
+            schedule_date = (datetime.now(timezone.utc) + timedelta(hours=schedule_hours)).isoformat()
+            publish_status = "future"
+            print(f"  [定时] {schedule_hours}小时后自动发布 ({schedule_date[:19]})")
+        else:
+            schedule_date = None
+            publish_status = "draft"
+
         article_meta = getattr(content_generator, '_article_meta', {}) if not dry_run else {}
         wp_inputs = []
         for i, title in enumerate(titles):
             kw = filtered_keywords[i] if i < len(filtered_keywords) else ""
             content = contents[i] if i < len(contents) else ""
             meta = article_meta.get(content, {})
+            cat_name = keyword_categories.get(kw, DEFAULT_AI_CATEGORY)
             wp_inputs.append({
                 "title": title,
                 "content": content,
                 "keyword": kw,
                 "slug": meta.get("slug", ""),
                 "excerpt": meta.get("excerpt", ""),
+                "categories": [cat_name],
+                "publish_status": publish_status,
+                "schedule_date": schedule_date,
             })
 
         if dry_run:
@@ -785,7 +859,11 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                 })
                 result = publisher.execute(wp_inputs)
                 if result.status.value == "completed":
-                    publish_results = result.output_data
+                    # 将 dataclass 转为 dict 以便后续统计
+                    publish_results = [
+                        {"post_id": r.post_id, "title": r.title, "status": r.status, "url": r.url}
+                        for r in result.output_data
+                    ]
                 else:
                     print(f"  [WARN]  发布未完全成功: {result.error_message}")
                     publish_results = [
@@ -968,6 +1046,127 @@ def handle_workflow_cancel(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"[FAIL] 取消工作流失败: {e}")
         logger.error("取消工作流失败", exc_info=True)
+        return 1
+
+
+def handle_workflow_auto_publish(args: argparse.Namespace) -> int:
+    """处理workflow auto-publish命令 — 自动定时发布草稿"""
+    import time as time_mod
+    from datetime import datetime, timezone
+    from src.modules.wordpress_integration.wp_api_client import get_wordpress_client
+
+    interval = max(args.interval_minutes, 1)
+    max_posts = args.max_posts
+    published_count = 0
+
+    print("=" * 60)
+    print("  草稿自动发布器")
+    print(f"  间隔: {interval} 分钟")
+    if max_posts > 0:
+        print(f"  上限: {max_posts} 篇")
+    print("=" * 60)
+
+    try:
+        client = get_wordpress_client(api_type="rest")
+    except Exception as e:
+        print(f"[FAIL] WordPress 连接失败: {e}")
+        return 1
+
+    try:
+        while True:
+            # 获取当前草稿
+            try:
+                drafts = client.get_posts(status="draft", per_page=100)
+            except Exception as e:
+                print(f"[WARN] 获取草稿列表失败: {e}，60秒后重试...")
+                time_mod.sleep(60)
+                continue
+
+            if not drafts:
+                print(f"\n[OK] 没有草稿了！共发布 {published_count} 篇")
+                break
+
+            # 已经达到上限
+            if max_posts > 0 and published_count >= max_posts:
+                print(f"\n[OK] 已达到上限 {max_posts} 篇，停止。剩余草稿: {len(drafts)}")
+                break
+
+            # 取最旧的草稿发布
+            draft = drafts[0]
+            post_id = draft.get("id")
+            title = draft.get("title", {}).get("rendered", "Untitled")
+
+            print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] "
+                  f"发布草稿 #{post_id}: {title[:60]}...")
+
+            try:
+                client.update_post(post_id, {"status": "publish"})
+                published_count += 1
+                print(f"  [OK] #{post_id} 已发布 ({published_count} 篇)")
+            except Exception as e:
+                print(f"  [FAIL] #{post_id} 发布失败: {e}，跳过")
+                continue
+
+            # 检查是否还有剩余
+            if max_posts == 0 or published_count < max_posts:
+                try:
+                    remaining = client.get_posts(status="draft", per_page=1)
+                except Exception:
+                    remaining = drafts[1:]  # 粗略估计
+                if not remaining:
+                    print(f"\n[OK] 全部发布完毕！共 {published_count} 篇")
+                    break
+
+            # 已到上限则停止
+            if max_posts > 0 and published_count >= max_posts:
+                print(f"\n[OK] 已完成 {published_count} 篇，停止")
+                break
+
+            # 等待间隔
+            next_publish = datetime.now(timezone.utc).timestamp() + interval * 60
+            next_time = datetime.fromtimestamp(next_publish).strftime('%H:%M:%S')
+            print(f"  下一篇: {next_time} (等待 {interval} 分钟...)")
+            time_mod.sleep(interval * 60)
+
+        return 0
+
+    except KeyboardInterrupt:
+        print(f"\n\n[STOP] 用户中断。已发布 {published_count} 篇")
+        return 0
+    except Exception as e:
+        print(f"[FAIL] 自动发布异常: {e}")
+        logger.error("自动发布异常", exc_info=True)
+        return 1
+
+
+def handle_workflow_publish_next(args: argparse.Namespace) -> int:
+    """处理workflow publish-next命令 — 发布1篇草稿（配合定时任务）"""
+    from datetime import datetime, timezone
+    from src.modules.wordpress_integration.wp_api_client import get_wordpress_client
+
+    try:
+        client = get_wordpress_client(api_type="rest")
+    except Exception as e:
+        print(f"[FAIL] WordPress 连接失败: {e}")
+        return 1
+
+    try:
+        drafts = client.get_posts(status="draft", per_page=1)
+        if not drafts:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] 没有草稿，跳过")
+            return 0
+
+        draft = drafts[0]
+        post_id = draft.get("id")
+        title = draft.get("title", {}).get("rendered", "Untitled")
+
+        client.update_post(post_id, {"status": "publish"})
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] "
+              f"已发布 #{post_id}: {title[:60]}")
+        return 0
+
+    except Exception as e:
+        print(f"[FAIL] 发布失败: {e}")
         return 1
 
 

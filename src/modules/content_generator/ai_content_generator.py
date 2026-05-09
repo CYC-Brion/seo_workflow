@@ -298,10 +298,11 @@ class AIContentGenerator(AINode):
         for input_item in batch:
             keyword = input_item["keyword"]
             title = input_item["title"]
+            category = input_item.get("category", "")
 
             try:
                 # 为每个输入生成内容
-                contents = self._generate_content_for_input(keyword, title)
+                contents = self._generate_content_for_input(keyword, title, category)
 
                 if contents:
                     generated_contents.extend(contents)
@@ -339,17 +340,20 @@ class AIContentGenerator(AINode):
         # 在实际应用中，这里可以调用不同的AI模型
         return self._process_batch(batch)
 
-    def _generate_content_for_input(self, keyword: str, title: str) -> List[str]:
+    def _generate_content_for_input(self, keyword: str, title: str, category: str = "") -> List[str]:
         """为单个输入生成内容"""
-        # 准备消息
-        messages = self._prepare_messages(keyword, title)
+        # 准备消息（根据分类选择 Prompt）
+        messages = self._prepare_messages(keyword, title, category)
+
+        # 获取分类对应的 prompt 模板参数
+        prompt_tpl = self._get_prompt_for_category(category)
 
         # 获取AI客户端
         ai_client = get_ai_client("content_generator", use_fallback=False)
 
         # 获取模型参数
-        temperature = self.prompt_template.get("parameters", {}).get("temperature", 0.7)
-        max_tokens = self.prompt_template.get("parameters", {}).get("max_tokens", 4000)
+        temperature = prompt_tpl.get("parameters", {}).get("temperature", 0.7)
+        max_tokens = prompt_tpl.get("parameters", {}).get("max_tokens", 4000)
 
         # 调用AI
         self.logger.debug(f"调用AI生成内容: {keyword} - {title}")
@@ -383,11 +387,11 @@ class AIContentGenerator(AINode):
 
         return contents
 
-    def _prepare_messages(self, keyword: str, title: str) -> List[AIMessage]:
-        """准备AI消息"""
-        # 获取Prompt模板
-        system_prompt = self.prompt_template.get("system", "")
-        user_prompt_template = self.prompt_template.get("user", "")
+    def _prepare_messages(self, keyword: str, title: str, category: str = "") -> List[AIMessage]:
+        """准备AI消息（根据分类选择 Prompt）"""
+        prompt_tpl = self._get_prompt_for_category(category)
+        system_prompt = prompt_tpl.get("system", "")
+        user_prompt_template = prompt_tpl.get("user", "")
 
         # 格式化用户提示
         user_prompt = user_prompt_template.format(
@@ -405,6 +409,16 @@ class AIContentGenerator(AINode):
         ]
 
         return messages
+
+    def _get_prompt_for_category(self, category: str) -> Dict[str, Any]:
+        """根据分类名称获取对应的 Prompt 模板"""
+        try:
+            from config.prompts_config import CATEGORY_PROMPTS
+            if category and category in CATEGORY_PROMPTS:
+                return CATEGORY_PROMPTS[category]
+        except ImportError:
+            pass
+        return self.prompt_template
 
     def _parse_ai_response(self, ai_response: str) -> str:
         """解析AI响应，提取HTML内容、slug和excerpt"""

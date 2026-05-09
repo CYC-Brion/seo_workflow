@@ -2,8 +2,8 @@
 关键词扩展器单元测试
 """
 import pytest
-from unittest.mock import Mock, patch
-import time
+from unittest.mock import Mock, patch, MagicMock
+import requests
 
 from src.modules.keyword_expander.keyword_expander import (
     KeywordExpander,
@@ -23,7 +23,6 @@ class TestKeywordExpander:
         assert expander.config == {}
         assert expander.max_expansions_per_keyword == 10
         assert expander.request_delay_seconds == 2
-        assert expander.use_mock_data == True
 
     def test_initialization_with_config(self):
         """测试带配置的初始化"""
@@ -31,8 +30,6 @@ class TestKeywordExpander:
             "max_expansions_per_keyword": 5,
             "request_delay_seconds": 1.5,
             "max_retries": 2,
-            "use_mock_data": False,
-            "enable_manual_fallback": False,
             "google_api_key": "test-key",
             "google_search_engine_id": "test-engine-id"
         }
@@ -40,8 +37,6 @@ class TestKeywordExpander:
         assert expander.max_expansions_per_keyword == 5
         assert expander.request_delay_seconds == 1.5
         assert expander.max_retries == 2
-        assert expander.use_mock_data == False
-        assert expander.enable_manual_fallback == False
         assert expander.google_api_key == "test-key"
         assert expander.google_search_engine_id == "test-engine-id"
         assert expander.has_google_api == True
@@ -49,8 +44,6 @@ class TestKeywordExpander:
     def test_validate_input_with_list(self):
         """测试列表输入验证"""
         expander = KeywordExpander("test-expander")
-
-        # 有效列表输入
         keywords = ["hardware tools", "lighting accessories"]
         validated = expander._validate_and_prepare_input(keywords)
         assert validated == keywords
@@ -58,8 +51,6 @@ class TestKeywordExpander:
     def test_validate_input_with_string(self):
         """测试字符串输入验证"""
         expander = KeywordExpander("test-expander")
-
-        # 逗号分隔的字符串
         input_str = "hardware tools, lighting accessories"
         validated = expander._validate_and_prepare_input(input_str)
         assert validated == ["hardware tools", "lighting accessories"]
@@ -67,8 +58,6 @@ class TestKeywordExpander:
     def test_validate_input_with_json_string(self):
         """测试JSON字符串输入验证"""
         expander = KeywordExpander("test-expander")
-
-        # JSON字符串
         input_str = '["hardware tools", "lighting accessories"]'
         validated = expander._validate_and_prepare_input(input_str)
         assert validated == ["hardware tools", "lighting accessories"]
@@ -76,7 +65,6 @@ class TestKeywordExpander:
     def test_validate_input_with_newline_separated(self):
         """测试换行分隔的字符串输入"""
         expander = KeywordExpander("test-expander")
-
         input_str = "hardware tools\nlighting accessories\nmetal parts"
         validated = expander._validate_and_prepare_input(input_str)
         assert validated == ["hardware tools", "lighting accessories", "metal parts"]
@@ -84,88 +72,160 @@ class TestKeywordExpander:
     def test_validate_input_empty(self):
         """测试空输入"""
         expander = KeywordExpander("test-expander")
-
         with pytest.raises(ValueError):
             expander._validate_and_prepare_input([])
-
         with pytest.raises(ValueError):
             expander._validate_and_prepare_input("")
 
     def test_validate_input_invalid_type(self):
         """测试无效输入类型"""
         expander = KeywordExpander("test-expander")
-
         with pytest.raises(ValueError):
             expander._validate_and_prepare_input(123)
 
-    def test_expand_with_mock_data(self):
-        """测试使用模拟数据扩展"""
-        expander = KeywordExpander("test-expander", {"use_mock_data": True})
+    def test_google_suggest_success(self):
+        """测试 Google Suggest 成功获取建议"""
+        expander = KeywordExpander("test-expander")
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            "metal hardware",
+            ["metal hardware manufacturers", "metal hardware suppliers", "metal hardware parts"]
+        ]
+        mock_response.raise_for_status.return_value = None
 
-        # 测试已知的模拟关键词
-        expansions = expander._expand_with_mock_data("metal hardware")
-        assert len(expansions) > 0
-        assert "metal hardware supplies" in expansions
+        with patch.object(expander.session, 'get', return_value=mock_response):
+            expansions = expander._get_google_suggestions("metal hardware")
+            assert len(expansions) > 0
+            assert "metal hardware manufacturers" in expansions
+            assert expansions[0] != "metal hardware"  # 原关键词应被过滤
 
-    def test_expand_with_patterns(self):
-        """测试基于模式的扩展"""
-        expander = KeywordExpander("test-expander", {
-            "use_mock_data": False,
-            "max_expansions_per_keyword": 15,
-        })
+    def test_google_suggest_deduplication(self):
+        """测试 Google Suggest 去重"""
+        expander = KeywordExpander("test-expander")
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            "test",
+            ["Test Keyword", "test keyword", "TEST KEYWORD"]
+        ]
+        mock_response.raise_for_status.return_value = None
 
-        expansions = expander._expand_with_patterns("test keyword")
-        assert len(expansions) > 0
-        assert "test keyword manufacturers" in expansions
-        assert "custom test keyword" in expansions
+        with patch.object(expander.session, 'get', return_value=mock_response):
+            expansions = expander._get_google_suggestions("test")
+            assert len(expansions) == 1  # 三个相同建议去重后只剩1个
 
-    def test_expand_keyword_with_mock(self):
-        """测试关键词扩展（使用模拟数据）"""
-        expander = KeywordExpander("test-expander", {"use_mock_data": True})
+    def test_bing_suggest_success(self):
+        """测试 Bing Suggest 成功获取建议"""
+        expander = KeywordExpander("test-expander")
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            "metal hardware",
+            ["metal hardware manufacturers", "metal hardware suppliers"]
+        ]
+        mock_response.raise_for_status.return_value = None
 
-        expansions = expander._expand_keyword("metal hardware")
-        assert len(expansions) > 0
-        assert len(expansions) <= expander.max_expansions_per_keyword
+        with patch.object(expander.session, 'get', return_value=mock_response):
+            expansions = expander._get_bing_suggestions("metal hardware")
+            assert len(expansions) == 2
+            assert "metal hardware manufacturers" in expansions
 
-    def test_expand_keyword_without_api(self):
-        """测试无API时的关键词扩展"""
-        expander = KeywordExpander("test-expander", {
-            "use_mock_data": False,
-            "google_api_key": None
-        })
+    def test_bing_suggest_failure_raises(self):
+        """测试 Bing Suggest 失败时抛出异常（不再静默跳过）"""
+        expander = KeywordExpander("test-expander")
 
-        expansions = expander._expand_keyword("test keyword")
-        assert len(expansions) > 0
+        with patch.object(expander.session, 'get', side_effect=requests.exceptions.ConnectionError("timeout")):
+            with pytest.raises(requests.exceptions.ConnectionError):
+                expander._get_bing_suggestions("test")
 
-    def test_execute_with_keywords(self):
-        """测试执行关键词扩展"""
-        expander = KeywordExpander("test-expander", {"use_mock_data": True})
+    def test_expand_keyword_merges_google_and_bing(self):
+        """测试合并 Google + Bing 建议并去重"""
+        expander = KeywordExpander("test-expander")
 
-        keywords = ["metal hardware", "lighting accessories"]
-        result = expander.execute_impl(keywords)
+        def mock_get(url, *args, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                resp.json.return_value = ["test", ["shared suggestion", "google only"]]
+            elif "api.bing.com" in url:
+                resp.json.return_value = ["test", ["shared suggestion", "bing only"]]
+            else:
+                resp.json.return_value = ["", []]
+            return resp
 
-        assert isinstance(result, list)
-        assert len(result) > len(keywords)  # 应该包含扩展关键词
-        assert "metal hardware" in result
-        assert "lighting accessories" in result
+        with patch.object(expander.session, 'get', side_effect=mock_get):
+            expansions = expander._expand_keyword("test")
+            # 去重: shared suggestion 只出现一次
+            assert "shared suggestion" in expansions
+            assert "google only" in expansions
+            assert "bing only" in expansions
+            # 不应包含原始关键词
+            assert "test" not in expansions
+            # 验证两个渠道都被调用了
+            assert expander.stats["google_suggest_requests"] == 1
+            assert expander.stats["bing_suggest_requests"] == 1
 
-    def test_execute_with_single_keyword(self):
-        """测试执行单个关键词扩展"""
-        expander = KeywordExpander("test-expander", {"use_mock_data": True})
+    def test_expand_keyword_google_fail_raises(self):
+        """测试 Google 失败时立即报错（不再降级到仅用 Bing）"""
+        expander = KeywordExpander("test-expander")
 
-        result = expander.execute_impl(["metal hardware"])
-        assert isinstance(result, list)
-        assert len(result) > 1
+        def mock_get(url, *args, **kwargs):
+            if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                raise requests.exceptions.ConnectionError("Google blocked")
+            elif "api.bing.com" in url:
+                resp = MagicMock()
+                resp.json.return_value = ["test", ["bing suggestion 1"]]
+                resp.raise_for_status.return_value = None
+                return resp
+            return MagicMock()
+
+        with patch.object(expander.session, 'get', side_effect=mock_get):
+            with pytest.raises(RuntimeError, match="Google Suggest 不可用"):
+                expander._expand_keyword("test")
+
+    def test_expand_keyword_all_fail_raises_error(self):
+        """测试 Google 失败时抛出 RuntimeError"""
+        expander = KeywordExpander("test-expander")
+
+        def mock_get(url, *args, **kwargs):
+            raise requests.exceptions.ConnectionError("Network down")
+
+        with patch.object(expander.session, 'get', side_effect=mock_get):
+            with pytest.raises(RuntimeError, match="Google Suggest 不可用"):
+                expander._expand_keyword("test")
+
+    def test_execute_success(self):
+        """测试完整的执行流程（Google + Bing 合并去重）"""
+        expander = KeywordExpander("test-expander")
+
+        def mock_get(url, *args, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                resp.json.return_value = [
+                    "hardware",
+                    ["hardware tools", "hardware supplies"]
+                ]
+            elif "api.bing.com" in url:
+                resp.json.return_value = [
+                    "hardware",
+                    ["hardware parts", "hardware supplies"]  # "hardware supplies" 与 Google 重复
+                ]
+            else:
+                resp.json.return_value = ["", []]
+            return resp
+
+        with patch.object(expander.session, 'get', side_effect=mock_get):
+            result = expander.execute_impl(["hardware"])
+            assert isinstance(result, list)
+            assert len(result) > 1  # 原词 + 扩展
+            assert "hardware" in result
+            assert "hardware tools" in result
+            assert "hardware parts" in result
 
     def test_validate_input_method(self):
         """测试输入验证方法"""
         expander = KeywordExpander("test-expander")
-
-        # 有效输入
         assert expander.validate_input(["keyword1", "keyword2"]) == True
         assert expander.validate_input("keyword1, keyword2") == True
-
-        # 无效输入
         assert expander.validate_input(None) == False
         assert expander.validate_input(123) == False
         assert expander.validate_input([]) == False
@@ -173,11 +233,7 @@ class TestKeywordExpander:
     def test_validate_output_method(self):
         """测试输出验证方法"""
         expander = KeywordExpander("test-expander")
-
-        # 有效输出
         assert expander.validate_output(["keyword1", "keyword2"]) == True
-
-        # 无效输出
         assert expander.validate_output(None) == False
         assert expander.validate_output([]) == False
         assert expander.validate_output("not a list") == False
@@ -189,7 +245,7 @@ class TestKeywordExpander:
         expander = KeywordExpander("test-expander")
         result = expander.pre_execute(["test"])
         assert result == ["test"]
-        assert expander.stats["total_keywords"] == 0  # 尚未统计
+        assert expander.stats["total_keywords"] == 0
 
     def test_post_execute(self):
         """测试执行后处理"""
@@ -202,13 +258,26 @@ class TestKeywordExpander:
         """测试获取统计信息"""
         expander = KeywordExpander("test-expander")
 
-        # 执行一些操作
-        expander.execute_impl(["metal hardware"])
+        def mock_get(url, *args, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                resp.json.return_value = ["metal hardware", ["metal hardware suppliers"]]
+            elif "api.bing.com" in url:
+                resp.json.return_value = ["metal hardware", ["metal hardware catalog"]]
+            else:
+                resp.json.return_value = ["", []]
+            return resp
+
+        with patch.object(expander.session, 'get', side_effect=mock_get):
+            expander.execute_impl(["metal hardware"])
 
         stats = expander.get_statistics()
         assert isinstance(stats, dict)
         assert "total_keywords" in stats
         assert "keywords_expanded" in stats
+        assert "google_suggest_requests" in stats
+        assert "bing_suggest_requests" in stats
 
     def test_keyword_expansion_result_dataclass(self):
         """测试KeywordExpansionResult数据类"""
@@ -217,9 +286,8 @@ class TestKeywordExpander:
             expanded_keywords=["exp1", "exp2"],
             keyword_sources={"kw1": ["exp1"]},
             expansion_stats={"count": 1},
-            metadata={"method": "mock"}
+            metadata={"method": "google_suggest"}
         )
-
         assert result.original_keywords == ["kw1", "kw2"]
         assert result.expanded_keywords == ["exp1", "exp2"]
         assert result.keyword_sources == {"kw1": ["exp1"]}
@@ -231,29 +299,27 @@ class TestExpandKeywordsFunction:
     def test_expand_keywords_function(self):
         """测试便捷函数"""
         keywords = ["metal hardware"]
-        expanded_keywords, stats = expand_keywords(
-            keywords,
-            max_expansions_per_keyword=5,
-            request_delay_seconds=0.1,
-            use_mock_data=True
-        )
 
-        assert isinstance(expanded_keywords, list)
-        assert isinstance(stats, dict)
-        assert len(expanded_keywords) > len(keywords)
+        def mock_get(self, url, *args, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                resp.json.return_value = ["metal hardware", ["metal hardware suppliers"]]
+            elif "api.bing.com" in url:
+                resp.json.return_value = ["metal hardware", ["metal hardware catalog"]]
+            else:
+                resp.json.return_value = ["", []]
+            return resp
 
-    def test_expand_keywords_with_custom_config(self):
-        """测试带自定义配置的便捷函数"""
-        keywords = ["test keyword"]
-        expanded_keywords, stats = expand_keywords(
-            keywords,
-            max_expansions_per_keyword=3,
-            request_delay_seconds=0,
-            use_mock_data=True,
-            enable_manual_fallback=False
-        )
-
-        assert len(expanded_keywords) > 0
+        with patch("requests.Session.get", mock_get):
+            expanded_keywords, stats = expand_keywords(
+                keywords,
+                max_expansions_per_keyword=5,
+                request_delay_seconds=0.1,
+            )
+            assert isinstance(expanded_keywords, list)
+            assert isinstance(stats, dict)
+            assert len(expanded_keywords) > len(keywords)
 
 
 if __name__ == "__main__":

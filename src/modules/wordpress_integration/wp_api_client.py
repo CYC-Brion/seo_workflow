@@ -339,6 +339,34 @@ class WordPressRESTClient(WordPressClient):
             self.logger.error(f"上传媒体失败: {e}")
             raise WordPressAPIError(f"上传媒体失败: {e}")
 
+    def get_posts(self, status: str = "draft", per_page: int = 100, **kwargs) -> List[Dict[str, Any]]:
+        """获取文章列表"""
+        url = f"{self.rest_api_url}/posts"
+        params = {"status": status, "per_page": per_page, **kwargs}
+        try:
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            posts = response.json()
+            self.logger.debug(f"获取文章列表: status={status}, count={len(posts)}")
+            return posts
+        except RequestException as e:
+            self.logger.error(f"获取文章列表失败: {e}")
+            raise WordPressAPIError(f"获取文章列表失败: {e}")
+
+    def update_post(self, post_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        """更新文章"""
+        url = f"{self.rest_api_url}/posts/{post_id}"
+        try:
+            response = self.session.post(url, json=data, timeout=self.timeout)
+            if response.status_code < 200 or response.status_code >= 300:
+                self._handle_api_error(response)
+            result = response.json()
+            self.logger.info(f"文章更新成功: {post_id}, status={data.get('status', '?')}")
+            return result
+        except RequestException as e:
+            self.logger.error(f"更新文章失败: {e}")
+            raise WordPressAPIError(f"更新文章失败: {e}")
+
     def get_categories(self, **kwargs) -> List[WordPressCategory]:
         """获取分类列表"""
         url = f"{self.rest_api_url}/categories"
