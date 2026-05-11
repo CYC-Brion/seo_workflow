@@ -2,46 +2,135 @@ name: SEO Auto Publish Draft
 
 on:
   schedule:
-    - cron: "7 * * * *"                  # 每小时执行（UTC），错开整点高峰
-  workflow_dispatch:                       # 允许手动触发测试
+    - cron: "7 * * * *" # Every hour at :07 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: seo-auto-publish
+  cancel-in-progress: false
 
 jobs:
   publish-next:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - name: Publish oldest draft
+      - name: Publish oldest draft with diagnostics
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_AUTH: ${{ secrets.WP_AUTH }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          echo "=== $(date -u '+%Y-%m-%d %H:%M:%S UTC') 开始 ==="
+          echo "=== Auto publish diagnostic start ==="
+          echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Event: ${GITHUB_EVENT_NAME}"
+          echo "Branch: ${GITHUB_REF_NAME}"
+          echo "Expected schedule: every hour at minute 07 UTC"
 
-          # 1. 获取最旧的一篇草稿
-          drafts=$(curl -s -u "$WP_AUTH" \
-            "${WP_URL}/wp-json/wp/v2/posts?status=draft&per_page=1&orderby=date&order=asc")
+          if [ -z "${WP_URL:-}" ]; then
+            echo "ERROR: secret WP_URL is empty or missing"
+            exit 1
+          fi
 
-          if [ -z "$drafts" ] || [ "$drafts" = "[]" ]; then
-            echo "没有草稿，跳过"
+          if [ -z "${WP_AUTH:-}" ]; then
+            echo "ERROR: secret WP_AUTH is empty or missing"
+            exit 1
+          fi
+
+          echo "WP_URL detected: ${WP_URL}"
+          echo "WP_AUTH detected: yes"
+
+          api_root="${WP_URL%/}/wp-json/wp/v2"
+          drafts_endpoint="${api_root}/posts?status=draft&per_page=5&orderby=date&order=asc"
+
+          echo "Checking drafts endpoint..."
+          echo "GET ${drafts_endpoint}"
+
+          drafts_body_file="$(mktemp)"
+          drafts_http_code="$(curl -sS \
+            -u "$WP_AUTH" \
+            -o "$drafts_body_file" \
+            -w "%{http_code}" \
+            "$drafts_endpoint")"
+
+          echo "Draft list HTTP status: ${drafts_http_code}"
+          echo "Draft list raw response preview:"
+          head -c 1200 "$drafts_body_file" || true
+          echo
+
+          if [ "$drafts_http_code" -lt 200 ] || [ "$drafts_http_code" -ge 300 ]; then
+            echo "ERROR: failed to query draft list"
+            exit 1
+          fi
+
+          draft_count="$(python3 - "$drafts_body_file" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+if isinstance(data, list):
+    print(len(data))
+else:
+    print("0")
+PY
+)"
+
+          echo "Drafts returned in this page: ${draft_count}"
+
+          if [ "$draft_count" = "0" ]; then
+            echo "No drafts returned by API, nothing to publish"
             exit 0
           fi
 
-          post_id=$(echo "$drafts" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
-          title=$(echo "$drafts" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['title']['rendered'])")
+          post_id="$(python3 - "$drafts_body_file" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+print(data[0]["id"])
+PY
+)"
 
-          echo "发布 #${post_id}: ${title}"
+          title="$(python3 - "$drafts_body_file" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+print(data[0]["title"]["rendered"])
+PY
+)"
 
-          # 2. 更新状态为 publish
-          result=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+          echo "Oldest draft selected: #${post_id}"
+          echo "Title: ${title}"
+
+          publish_endpoint="${api_root}/posts/${post_id}"
+          publish_body_file="$(mktemp)"
+
+          echo "Publishing selected draft..."
+          echo "POST ${publish_endpoint}"
+
+          publish_http_code="$(curl -sS \
+            -X POST \
             -H "Content-Type: application/json" \
             -u "$WP_AUTH" \
             -d '{"status":"publish"}' \
-            "${WP_URL}/wp-json/wp/v2/posts/${post_id}")
+            -o "$publish_body_file" \
+            -w "%{http_code}" \
+            "$publish_endpoint")"
 
-          if [ "$result" -ge 200 ] && [ "$result" -lt 300 ]; then
-            echo "已发布 #${post_id}: ${title:0:80}"
+          echo "Publish HTTP status: ${publish_http_code}"
+          echo "Publish raw response preview:"
+          head -c 1200 "$publish_body_file" || true
+          echo
+
+          if [ "$publish_http_code" -ge 200 ] && [ "$publish_http_code" -lt 300 ]; then
+            echo "SUCCESS: published #${post_id}: ${title:0:120}"
           else
-            echo "FAIL: HTTP ${result}"
+            echo "ERROR: publish failed with HTTP ${publish_http_code}"
             exit 1
           fi
+
+          echo "=== Auto publish diagnostic end ==="
