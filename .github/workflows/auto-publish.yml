@@ -66,17 +66,7 @@ jobs:
             exit 1
           fi
 
-          draft_count="$(python3 - "$drafts_body_file" <<'PY'
-import json, sys
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-if isinstance(data, list):
-    print(len(data))
-else:
-    print("0")
-PY
-)"
+          draft_count="$(python3 -c "import json,sys; data=json.load(open(sys.argv[1], encoding='utf-8')); print(len(data) if isinstance(data, list) else 0)" "$drafts_body_file")"
 
           echo "Drafts returned in this page: ${draft_count}"
 
@@ -85,23 +75,9 @@ PY
             exit 0
           fi
 
-          post_id="$(python3 - "$drafts_body_file" <<'PY'
-import json, sys
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-print(data[0]["id"])
-PY
-)"
+          post_id="$(python3 -c "import json,sys; data=json.load(open(sys.argv[1], encoding='utf-8')); print(data[0]['id'])" "$drafts_body_file")"
 
-          title="$(python3 - "$drafts_body_file" <<'PY'
-import json, sys
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-print(data[0]["title"]["rendered"])
-PY
-)"
+          title="$(python3 -c "import json,sys; data=json.load(open(sys.argv[1], encoding='utf-8')); print(data[0]['title']['rendered'])" "$drafts_body_file")"
 
           echo "Oldest draft selected: #${post_id}"
           echo "Title: ${title}"
