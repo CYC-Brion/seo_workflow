@@ -1,0 +1,47 @@
+name: SEO Auto Publish Draft
+
+on:
+  schedule:
+    - cron: "7 * * * *"                  # 每小时执行（UTC），错开整点高峰
+  workflow_dispatch:                       # 允许手动触发测试
+
+jobs:
+  publish-next:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish oldest draft
+        env:
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_AUTH: ${{ secrets.WP_AUTH }}
+        run: |
+          set -euo pipefail
+
+          echo "=== $(date -u '+%Y-%m-%d %H:%M:%S UTC') 开始 ==="
+
+          # 1. 获取最旧的一篇草稿
+          drafts=$(curl -s -u "$WP_AUTH" \
+            "${WP_URL}/wp-json/wp/v2/posts?status=draft&per_page=1&orderby=date&order=asc")
+
+          if [ -z "$drafts" ] || [ "$drafts" = "[]" ]; then
+            echo "没有草稿，跳过"
+            exit 0
+          fi
+
+          post_id=$(echo "$drafts" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
+          title=$(echo "$drafts" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['title']['rendered'])")
+
+          echo "发布 #${post_id}: ${title}"
+
+          # 2. 更新状态为 publish
+          result=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -u "$WP_AUTH" \
+            -d '{"status":"publish"}' \
+            "${WP_URL}/wp-json/wp/v2/posts/${post_id}")
+
+          if [ "$result" -ge 200 ] && [ "$result" -lt 300 ]; then
+            echo "已发布 #${post_id}: ${title:0:80}"
+          else
+            echo "FAIL: HTTP ${result}"
+            exit 1
+          fi

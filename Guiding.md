@@ -25,48 +25,27 @@ python -m src.cli.main workflow run 测试用例.xlsx --dry-run
 
 ### 3. 发布
 
-定时任务 `SEO_Auto_Publish_Draft` 每小时自动发布一篇草稿，无需手动操作。
+自动发布由 **GitHub Actions** 负责，每小时执行一次，无需电脑开机。
 
 ```bash
 # 手动发布一篇（测试用）
 python -m src.cli.main workflow publish-next
-
-# 手动持续发布（前台运行，关了终端就停）
-python -m src.cli.main workflow auto-publish
 ```
 
 ### 4. 检查自动发布状态
 
-**查看执行日志：**
+打开仓库的 GitHub Actions 面板 → 点 `SEO Auto Publish Draft` → 查看每次运行的日志。
 
-打开 `data/logs/auto_publish.log`，每次执行的发布时间、文章编号、标题、退出码都会记录。
-
-```bash
-# 命令行查看最近 10 条日志
-python -c "
-with open('data/logs/auto_publish.log', encoding='utf-8') as f:
-    lines = [l for l in f if 'Exit code' in l or 'Starting' in l]
-    for l in lines[-10:]: print(l.strip())
-"
+有草稿时的日志示例：
+```
+=== 2026-05-11 03:07:00 UTC 开始 ===
+发布 #14435: Lighting Accessories Meaning...
+已发布 #14435: ...
 ```
 
-**查看计划任务状态：**
-
-```powershell
-# PowerShell 查看任务信息和下次运行时间
-Get-ScheduledTaskInfo -TaskName "SEO_Auto_Publish_Draft" | fl *
+没有草稿时：
 ```
-
-输出示例：
-```
-LastRunTime : 2026-05-09 19:50:09    ← 上次执行时间
-NextRunTime : 2026-05-09 20:50:09    ← 下次执行时间
-```
-
-**如果计划任务不工作了**（重新创建）：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File setup_scheduled_task.ps1
+没有草稿，跳过
 ```
 
 ---
