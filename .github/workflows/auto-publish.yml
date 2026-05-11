@@ -2,7 +2,7 @@ name: SEO Auto Publish Draft
 
 on:
   schedule:
-    - cron: "7 * * * *" # Every hour at :07 UTC
+    - cron: "*/15 * * * *" # Temporary: every 15 minutes for schedule diagnostics
   workflow_dispatch:
 
 concurrency:
@@ -28,7 +28,7 @@ jobs:
           echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo "Event: ${GITHUB_EVENT_NAME}"
           echo "Branch: ${GITHUB_REF_NAME}"
-          echo "Expected schedule: every hour at minute 07 UTC"
+          echo "Expected schedule: every 15 minutes (temporary diagnostics mode)"
 
           if [ -z "${WP_URL:-}" ]; then
             echo "ERROR: secret WP_URL is empty or missing"
