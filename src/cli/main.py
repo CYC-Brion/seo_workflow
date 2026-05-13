@@ -1,4 +1,4 @@
-"""
+﻿"""
 SEO工作流系统命令行接口
 """
 
@@ -6,8 +6,9 @@ import argparse
 import os
 import sys
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.utils import get_logger, config_manager
 from src.modules import (
@@ -22,6 +23,45 @@ from src.core import WorkflowEngine, StateManager, WorkflowState, WorkflowStatus
 
 
 logger = get_logger("cli")
+
+
+def resolve_schedule_settings(
+    schedule_hours: Optional[float],
+    schedule_interval_hours: Optional[float],
+    schedule_posts_enabled: bool,
+    default_schedule_hours: float,
+    default_schedule_interval_hours: float,
+) -> Tuple[float, float]:
+    """Resolve effective scheduling values for the workflow run."""
+    effective_schedule_hours = (
+        default_schedule_hours
+        if schedule_hours is None and schedule_posts_enabled
+        else (schedule_hours or 0)
+    )
+    effective_schedule_interval_hours = (
+        default_schedule_interval_hours
+        if schedule_interval_hours is None and effective_schedule_hours > 0
+        else (schedule_interval_hours or 0)
+    )
+    return effective_schedule_hours, effective_schedule_interval_hours
+
+
+def build_publish_schedule(
+    total_posts: int,
+    schedule_hours: float,
+    schedule_interval_hours: float,
+    now: Optional[datetime] = None,
+) -> Tuple[str, List[Optional[str]]]:
+    """Build the publish status and per-post schedule timestamps."""
+    if schedule_hours <= 0:
+        return "draft", [None] * total_posts
+
+    base_time = (now or datetime.now(timezone.utc)) + timedelta(hours=schedule_hours)
+    schedule_dates = [
+        (base_time + timedelta(hours=schedule_interval_hours * index)).isoformat()
+        for index in range(total_posts)
+    ]
+    return "future", schedule_dates
 
 
 def setup_parser() -> argparse.ArgumentParser:
@@ -212,8 +252,15 @@ def setup_parser() -> argparse.ArgumentParser:
     workflow_run_parser.add_argument(
         "--schedule-hours",
         type=float,
-        default=0,
+        default=None,
         help="定时发布：N小时后自动发布（0=立即存为草稿）。例如 --schedule-hours 24 表示24小时后发布"
+    )
+
+    workflow_run_parser.add_argument(
+        "--schedule-interval-hours",
+        type=float,
+        default=None,
+        help="定时发布时，每篇文章之间间隔 N 小时。0 表示同一时间发布"
     )
 
     # workflow status
@@ -808,19 +855,28 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         # ============================
         step += 1
         print(f"\n[{step}/{total_steps}] WordPress 发布...")
-        # 构建 WordPress 发布输入
-        from config.wordpress_config import CATEGORY_MAPPING
-        from datetime import datetime, timedelta, timezone
 
-        # 定时发布逻辑
-        schedule_hours = getattr(args, 'schedule_hours', 0) or 0
-        if schedule_hours > 0:
-            schedule_date = (datetime.now(timezone.utc) + timedelta(hours=schedule_hours)).isoformat()
-            publish_status = "future"
-            print(f"  [定时] {schedule_hours}小时后自动发布 ({schedule_date[:19]})")
-        else:
-            schedule_date = None
-            publish_status = "draft"
+        wp_runtime_config = config_manager.wordpress_config
+        schedule_hours, schedule_interval_hours = resolve_schedule_settings(
+            schedule_hours=getattr(args, "schedule_hours", None),
+            schedule_interval_hours=getattr(args, "schedule_interval_hours", None),
+            schedule_posts_enabled=wp_runtime_config.schedule_posts,
+            default_schedule_hours=wp_runtime_config.default_schedule_hours,
+            default_schedule_interval_hours=wp_runtime_config.default_schedule_interval_hours,
+        )
+        publish_status, post_schedule_dates = build_publish_schedule(
+            total_posts=len(titles),
+            schedule_hours=schedule_hours,
+            schedule_interval_hours=schedule_interval_hours,
+        )
+        if post_schedule_dates and post_schedule_dates[0]:
+            print(f"  [SCHEDULE] first post will publish at {post_schedule_dates[0][:19]} UTC")
+            if schedule_interval_hours > 0 and len(post_schedule_dates) > 1:
+                print(
+                    f"  [SCHEDULE] {len(post_schedule_dates)} posts queued, "
+                    f"last post at {post_schedule_dates[-1][:19]} UTC, "
+                    f"interval {schedule_interval_hours} hour(s)"
+                )
 
         article_meta = getattr(content_generator, '_article_meta', {}) if not dry_run else {}
         wp_inputs = []
@@ -829,6 +885,7 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
             content = contents[i] if i < len(contents) else ""
             meta = article_meta.get(content, {})
             cat_name = keyword_categories.get(kw, DEFAULT_AI_CATEGORY)
+            post_schedule_date = post_schedule_dates[i] if i < len(post_schedule_dates) else None
             wp_inputs.append({
                 "title": title,
                 "content": content,
@@ -837,14 +894,14 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                 "excerpt": meta.get("excerpt", ""),
                 "categories": [cat_name],
                 "publish_status": publish_status,
-                "schedule_date": schedule_date,
+                "schedule_date": post_schedule_date,
             })
 
         if dry_run:
             print("  [SKIP]  DRY-RUN: 跳过 WordPress 发布")
-            print(f"  将发布 {len(wp_inputs)} 篇文章（草稿状态）")
+            print(f"  将发布 {len(wp_inputs)} 篇文章（{publish_status} 状态）")
             publish_results = [
-                {"post_id": None, "title": inp["title"], "status": "draft", "url": "(dry-run)"}
+                {"post_id": None, "title": inp["title"], "status": publish_status, "url": "(dry-run)"}
                 for inp in wp_inputs
             ]
         else:
@@ -879,10 +936,11 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                 ]
 
         # 统计发布结果
-        published = sum(1 for r in publish_results if r.get("post_id"))
+        published = sum(1 for r in publish_results if r.get("status") in ("publish", "published"))
+        scheduled = sum(1 for r in publish_results if r.get("status") == "future")
         drafts = sum(1 for r in publish_results if r.get("status") == "draft")
         failed = sum(1 for r in publish_results if r.get("status") in ("failed", "skipped"))
-        print(f"  [OK] 发布完成: {published} 已发布, {drafts} 草稿, {failed} 跳过/失败")
+        print(f"  [OK] 发布完成: {published} 已发布, {scheduled} 已排期, {drafts} 草稿, {failed} 跳过/失败")
 
         # ============================
         # 保存结果
@@ -931,7 +989,7 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         print(f"  Workflow ID: {engine.workflow_id}")
         print(f"  关键词: {len(keywords)} → 扩展 {len(expanded_keywords)} → 筛选 {len(filtered_keywords)}")
         print(f"  生成: {len(titles)} 标题, {len(contents)} 篇文章")
-        print(f"  发布: {published} 已发布, {drafts} 草稿, {failed} 跳过")
+        print(f"  发布: {published} 已发布, {scheduled} 已排期, {drafts} 草稿, {failed} 跳过")
         print(f"  输出目录: {output_dir}")
         print(f"{'=' * 60}")
 

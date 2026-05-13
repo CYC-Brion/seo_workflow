@@ -45,6 +45,9 @@ logs/
 # Data files
 data/output/
 data/cache/
+output/
+image/
+future_publish_test.xlsx
 
 # OS
 .DS_Store

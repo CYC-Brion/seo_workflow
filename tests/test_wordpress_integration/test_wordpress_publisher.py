@@ -271,10 +271,40 @@ class TestWordPressPublisher:
         assert result.post_id == 0
         assert result.status == "failed"
         assert result.error == "API Error"
-
-        # 验证统计信息更新
         assert self.publisher.stats["posts_failed"] == 1
         assert self.publisher.stats["api_errors"] == 1
+
+
+    @patch('src.modules.wordpress_integration.wordpress_publisher.get_wordpress_client')
+    def test_process_single_post_future_schedule(self, mock_get_client):
+        """Scheduled posts should be created as future posts with a publish date."""
+        mock_client = Mock()
+        mock_get_client.return_value = mock_client
+        mock_client.get_categories.return_value = []
+        mock_client.get_tags.return_value = []
+        mock_client.create_post.return_value = {
+            "id": 456,
+            "link": "https://test.com/scheduled-post",
+            "date": "2026-05-11T17:00:00"
+        }
+
+        self.publisher.wp_client = mock_client
+
+        publish_input = WordPressPublishInput(
+            title="Scheduled Post",
+            content="Scheduled content",
+            publish_status="future",
+            schedule_date="2026-05-11T17:00:00+00:00"
+        )
+
+        result = self.publisher._process_single_post(publish_input)
+
+        assert result.post_id == 456
+        assert result.status == "future"
+
+        create_post_input = mock_client.create_post.call_args[0][0]
+        assert create_post_input.status == "future"
+        assert create_post_input.date == "2026-05-11T17:00:00+00:00"
 
     def test_validate_input_success(self):
         """测试输入验证成功"""

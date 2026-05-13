@@ -88,6 +88,7 @@ class WordPressConfig:
     max_image_size_mb: int
     schedule_posts: bool
     default_schedule_hours: int
+    default_schedule_interval_hours: int
     timezone: str
     verify_ssl: bool
     timeout: int
@@ -112,6 +113,7 @@ class WordPressConfig:
             max_image_size_mb=data.get("MAX_IMAGE_SIZE_MB", 5),
             schedule_posts=data.get("SCHEDULE_POSTS", False),
             default_schedule_hours=data.get("DEFAULT_SCHEDULE_HOURS", 24),
+            default_schedule_interval_hours=data.get("DEFAULT_SCHEDULE_INTERVAL_HOURS", 24),
             timezone=data.get("TIMEZONE", "UTC"),
             verify_ssl=data.get("VERIFY_SSL", True),
             timeout=data.get("TIMEOUT", 30),

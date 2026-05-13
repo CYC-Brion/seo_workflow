@@ -219,6 +219,7 @@ class WordPressPublisher(DataProcessingNode):
 
             # 处理定时发布
             post_date = None
+            publish_status = post_input.publish_status or self.default_status
             if post_input.publish_status == "future" and post_input.schedule_date:
                 post_date = post_input.schedule_date
             elif post_input.publish_status == "publish" and post_input.schedule_date:

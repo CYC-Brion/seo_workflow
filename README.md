@@ -1,75 +1,171 @@
 # SEO Content Automation Workflow
 
-## 项目概述
-AI自动化SEO文章生成与发布工作流系统，实现从关键词提取到文章生成再到WordPress发布的完整自动化流程。
+## Overview
+This project turns an Excel keyword list into scheduled WordPress SEO posts.
 
-## 核心功能
-1. **Excel关键词读取** - 支持.xlsx/.xls格式文件上传，自动解析关键词
-2. **Google关键词扩展** - 调用Google搜索API获取下拉推荐关键词
-3. **AI关键词筛选** - 使用AI模型筛选与五金灯饰配件行业无关的关键词
-4. **AI文章标题生成** - 为每个关键词生成3个英文SEO标题
-5. **AI文章内容生成** - 生成约1500字英文SEO文章，输出HTML格式
-6. **WordPress同步与发布** - 对接WordPress API，支持定时发布
+Main pipeline:
 
-## 增强功能
-- **Prompt管理模块** - 灵活编辑和管理各节点Prompt
-- **图片插入功能** - 支持WordPress媒体库图片和AI生成图片
-- **多AI模型调度** - 不同节点可配置不同AI模型
+1. Read keywords from Excel
+2. Expand long-tail keywords
+3. Filter industry-relevant keywords with AI
+4. Generate titles with AI
+5. Generate article content with AI
+6. Publish to WordPress
 
-## 项目结构
-```
-seo-content-automation/
-├── config/              # 配置文件
-├── src/                 # 源代码
-│   ├── core/           # 核心工作流引擎
-│   ├── modules/        # 工作流节点模块
-│   ├── enhanced_features/ # 增强功能模块
-│   ├── utils/          # 工具函数库
-│   ├── api/            # API接口层
-│   └── cli/            # 命令行接口
-├── tests/              # 测试目录
-├── examples/           # 使用示例
-├── notebooks/          # Jupyter笔记本
-├── scripts/            # 可执行脚本
-├── data/               # 数据目录
-├── docs/               # 文档目录
-└── logs/               # 日志目录
+The primary publishing strategy is now WordPress native `future` scheduling.
+GitHub Actions is no longer used as the default hourly auto-publisher.
+
+## Current Default Behavior
+The default scheduling configuration is:
+
+```python
+SCHEDULE_POSTS = True
+DEFAULT_SCHEDULE_HOURS = 1
+DEFAULT_SCHEDULE_INTERVAL_HOURS = 1
+TIMEZONE = "UTC"
 ```
 
-## 快速开始
+That means:
+
+- the first article is scheduled 1 hour after the workflow starts
+- each following article is scheduled 1 hour after the previous one
+
+## Excel Format
+Prepare an `.xlsx` file with at least a `keywords` column.
+
+Example:
+
+| keywords | category |
+|----------|----------|
+| lamp holder | Technical Guides |
+| hardware accessories | Industry Insights |
+| surface treatment | Technical Guides |
+
+Notes:
+
+- `keywords` is required
+- `category` is optional
+- if `category` is empty, `Technical Guides` is used
+
+## Run The Real Workflow
+With the current defaults, run:
+
 ```bash
-# 1. 克隆项目
-git clone <repository-url>
-
-# 2. 创建虚拟环境
-python -m venv .venv
-
-# 3. 激活虚拟环境
-# Windows: .venv\Scripts\activate
-# Linux/Mac: source .venv/bin/activate
-
-# 4. 安装依赖
-pip install -r requirements.txt
-
-# 5. 配置API密钥和WordPress设置
-cp config/settings.example.py config/settings.py
-# 编辑config/settings.py文件，填入您的API密钥和配置
-
-# 6. 运行示例工作流
-python scripts/run_workflow.py
+python -m src.cli.main workflow run 测试用例.xlsx
 ```
 
-## 配置说明
-1. **AI模型配置** - 在config/ai_models_config.py中配置OpenAI、Claude等API密钥
-2. **WordPress配置** - 在config/wordpress_config.py中配置WordPress站点URL、用户名、密码
-3. **Prompt配置** - 在config/prompts_config.py中管理各节点的Prompt模板
+This will:
 
-## 详细文档
+- read the Excel file
+- expand and filter keywords
+- generate titles and article content
+- push posts to WordPress
+- create them as `Scheduled` posts
 
-有关完整的产品需求文档（PRD）和详细的功能说明，请参阅 [docs/requirements/](docs/requirements/) 目录：
+## Common Commands
 
-- [PRD.ipynb](docs/requirements/PRD.ipynb) - Jupyter Notebook 格式的完整PRD文档
-- [Metal Hardware & Lighting Accessories 产品PRD需求文档（仅SEO相关）.docx](docs/requirements/Metal%20Hardware%20%26%20Lighting%20Accessories%20产品PRD需求文档（仅SEO相关）.docx) - Word 文档格式
+### Use default scheduling
 
-## 许可证
-MIT License
+```bash
+python -m src.cli.main workflow run 测试用例.xlsx
+```
+
+### Start publishing 24 hours later
+
+```bash
+python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24
+```
+
+### Start 24 hours later and stagger by 12 hours
+
+```bash
+python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24 --schedule-interval-hours 12
+```
+
+### Schedule all posts at the same time
+
+```bash
+python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24 --schedule-interval-hours 0
+```
+
+### Dry run
+
+```bash
+python -m src.cli.main workflow run 测试用例.xlsx --dry-run
+```
+
+## What To Check After A Run
+Look at:
+
+1. the terminal summary
+2. the WordPress admin post list
+
+Expected summary shape:
+
+```text
+生成: N 标题, N 篇文章
+发布: 0 已发布, N 已排期, 0 草稿, 0 跳过
+```
+
+Expected WordPress state:
+
+- new posts appear under `Scheduled`
+- publish times are staggered according to your settings
+- posts become `Published` automatically at the scheduled time
+
+## Environment Variables
+Sensitive WordPress credentials should live in `.env`, not in source files.
+
+Required WordPress variables:
+
+```env
+WORDPRESS_URL=https://yushengco.com/
+WORDPRESS_USERNAME=
+WORDPRESS_PASSWORD=
+WORDPRESS_APPLICATION_PASSWORD=
+```
+
+Scheduling variables:
+
+```env
+SCHEDULE_POSTS=true
+DEFAULT_SCHEDULE_HOURS=1
+DEFAULT_SCHEDULE_INTERVAL_HOURS=1
+WORDPRESS_TIMEZONE=UTC
+WORDPRESS_VERIFY_SSL=true
+WORDPRESS_TIMEOUT=30
+WORDPRESS_MAX_RETRIES=3
+```
+
+## Important Files
+
+| File | Purpose |
+|------|---------|
+| `config/wordpress_config.py` | WordPress connection, scheduling defaults, category mapping |
+| `config/prompts_config.py` | Prompt templates |
+| `config/ai_models_config.py` | AI model configuration |
+| `config/settings.py` | Project-level settings |
+| `Guiding.md` | Detailed operational guide |
+
+## Prompt Customization
+Prompts are managed in `config/prompts_config.py`.
+
+Useful sections:
+
+- `KEYWORD_FILTER_PROMPT`
+- `TITLE_GENERATOR_PROMPT`
+- `CONTENT_PROMPT_TECHNICAL_GUIDES`
+- `CONTENT_PROMPT_INDUSTRY_INSIGHTS`
+- `CATEGORY_PROMPTS`
+
+## Legacy GitHub Workflow
+`.github/workflows/auto-publish.yml` is retained only as a manual fallback for old draft-based publishing.
+
+- it no longer runs on a cron schedule
+- it should not be treated as the primary publishing mechanism
+
+## Notes
+
+- WordPress scheduling is now the source of truth for automatic publishing
+- if the WordPress site schedules correctly, GitHub cron is unnecessary
+- if you lose network during AI generation, some content batches may fail and need a targeted rerun

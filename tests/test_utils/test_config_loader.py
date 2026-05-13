@@ -578,6 +578,7 @@ class TestConfigManager:
             "MAX_IMAGE_SIZE_MB": 10,
             "SCHEDULE_POSTS": True,
             "DEFAULT_SCHEDULE_HOURS": 48,
+            "DEFAULT_SCHEDULE_INTERVAL_HOURS": 12,
             "TIMEZONE": "Asia/Shanghai",
             "VERIFY_SSL": False,
             "TIMEOUT": 60,
@@ -601,6 +602,7 @@ class TestConfigManager:
         assert config.max_image_size_mb == 10
         assert config.schedule_posts == True
         assert config.default_schedule_hours == 48
+        assert config.default_schedule_interval_hours == 12
         assert config.timezone == "Asia/Shanghai"
         assert config.verify_ssl == False
         assert config.timeout == 60
@@ -623,6 +625,7 @@ class TestConfigManager:
         assert config.api_url == ""
         assert config.xmlrpc_url == ""
         assert config.default_post_status == "draft"  # 默认值
+        assert config.default_schedule_interval_hours == 24
         assert config.default_post_type == "post"  # 默认值
         assert config.default_category_id == 1  # 默认值
         assert config.default_tag_ids == []  # 默认值

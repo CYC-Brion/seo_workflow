@@ -1,13 +1,7 @@
-name: SEO Auto Publish Draft
+name: Legacy Manual Draft Publish
 
 on:
-  schedule:
-    - cron: "*/15 * * * *" # Temporary: every 15 minutes for schedule diagnostics
   workflow_dispatch:
-
-concurrency:
-  group: seo-auto-publish
-  cancel-in-progress: false
 
 jobs:
   publish-next:
@@ -15,39 +9,23 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Publish oldest draft with diagnostics
+      - name: Manual legacy draft publish
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_AUTH: ${{ secrets.WP_AUTH }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          echo "=== Auto publish diagnostic start ==="
-          echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "Event: ${GITHUB_EVENT_NAME}"
-          echo "Branch: ${GITHUB_REF_NAME}"
-          echo "Expected schedule: every 15 minutes (temporary diagnostics mode)"
+          echo "This workflow is kept only as a manual fallback."
+          echo "The primary publishing flow now uses WordPress native future scheduling."
 
-          if [ -z "${WP_URL:-}" ]; then
-            echo "ERROR: secret WP_URL is empty or missing"
+          if [ -z "${WP_URL:-}" ] || [ -z "${WP_AUTH:-}" ]; then
+            echo "ERROR: WP_URL or WP_AUTH secret is missing"
             exit 1
           fi
-
-          if [ -z "${WP_AUTH:-}" ]; then
-            echo "ERROR: secret WP_AUTH is empty or missing"
-            exit 1
-          fi
-
-          echo "WP_URL detected: ${WP_URL}"
-          echo "WP_AUTH detected: yes"
 
           api_root="${WP_URL%/}/wp-json/wp/v2"
-          drafts_endpoint="${api_root}/posts?status=draft&per_page=5&orderby=date&order=asc"
-
-          echo "Checking drafts endpoint..."
-          echo "GET ${drafts_endpoint}"
+          drafts_endpoint="${api_root}/posts?status=draft&per_page=1&orderby=date&order=asc"
 
           drafts_body_file="$(mktemp)"
           drafts_http_code="$(curl -sS \
@@ -57,9 +35,6 @@ jobs:
             "$drafts_endpoint")"
 
           echo "Draft list HTTP status: ${drafts_http_code}"
-          echo "Draft list raw response preview:"
-          head -c 1200 "$drafts_body_file" || true
-          echo
 
           if [ "$drafts_http_code" -lt 200 ] || [ "$drafts_http_code" -ge 300 ]; then
             echo "ERROR: failed to query draft list"
@@ -68,45 +43,29 @@ jobs:
 
           draft_count="$(python3 -c "import json,sys; data=json.load(open(sys.argv[1], encoding='utf-8')); print(len(data) if isinstance(data, list) else 0)" "$drafts_body_file")"
 
-          echo "Drafts returned in this page: ${draft_count}"
-
           if [ "$draft_count" = "0" ]; then
-            echo "No drafts returned by API, nothing to publish"
+            echo "No draft posts found."
             exit 0
           fi
 
           post_id="$(python3 -c "import json,sys; data=json.load(open(sys.argv[1], encoding='utf-8')); print(data[0]['id'])" "$drafts_body_file")"
-
           title="$(python3 -c "import json,sys; data=json.load(open(sys.argv[1], encoding='utf-8')); print(data[0]['title']['rendered'])" "$drafts_body_file")"
 
-          echo "Oldest draft selected: #${post_id}"
-          echo "Title: ${title}"
-
           publish_endpoint="${api_root}/posts/${post_id}"
-          publish_body_file="$(mktemp)"
-
-          echo "Publishing selected draft..."
-          echo "POST ${publish_endpoint}"
-
           publish_http_code="$(curl -sS \
             -X POST \
             -H "Content-Type: application/json" \
             -u "$WP_AUTH" \
             -d '{"status":"publish"}' \
-            -o "$publish_body_file" \
+            -o /dev/null \
             -w "%{http_code}" \
             "$publish_endpoint")"
 
           echo "Publish HTTP status: ${publish_http_code}"
-          echo "Publish raw response preview:"
-          head -c 1200 "$publish_body_file" || true
-          echo
 
           if [ "$publish_http_code" -ge 200 ] && [ "$publish_http_code" -lt 300 ]; then
-            echo "SUCCESS: published #${post_id}: ${title:0:120}"
+            echo "SUCCESS: published #${post_id}: ${title}"
           else
             echo "ERROR: publish failed with HTTP ${publish_http_code}"
             exit 1
           fi
-
-          echo "=== Auto publish diagnostic end ==="
