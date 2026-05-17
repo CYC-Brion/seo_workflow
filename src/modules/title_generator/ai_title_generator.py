@@ -204,22 +204,37 @@ class AITitleGenerator(AINode):
 
         return all_titles
 
-    def _validate_and_prepare_input(self, input_data: Any) -> List[str]:
+    def _validate_and_prepare_input(self, input_data: Any) -> List[Dict[str, str]]:
         """验证和准备输入数据"""
+        keywords: List[Dict[str, str]] = []
         if isinstance(input_data, list):
-            keywords = [str(kw).strip() for kw in input_data if str(kw).strip()]
+            for item in input_data:
+                if isinstance(item, dict):
+                    keyword = str(item.get("keyword", item.get("keywords", ""))).strip()
+                    if not keyword:
+                        continue
+                    keywords.append({
+                        "keyword": keyword,
+                        "direction": str(item.get("direction", item.get("title_angle", item.get("pillar_direction", "")))).strip(),
+                    })
+                else:
+                    keyword = str(item).strip()
+                    if keyword:
+                        keywords.append({"keyword": keyword, "direction": ""})
         elif isinstance(input_data, str):
             # 尝试解析字符串为列表
             if input_data.startswith("[") and input_data.endswith("]"):
                 try:
-                    keywords = json.loads(input_data)
-                    keywords = [str(kw).strip() for kw in keywords if str(kw).strip()]
+                    parsed = json.loads(input_data)
+                    return self._validate_and_prepare_input(parsed)
                 except json.JSONDecodeError:
-                    keywords = [input_data.strip()]
+                    keyword = input_data.strip()
+                    if keyword:
+                        keywords = [{"keyword": keyword, "direction": ""}]
             else:
                 # 按逗号或换行分割
-                keywords = re.split(r'[,\n]', input_data)
-                keywords = [kw.strip() for kw in keywords if kw.strip()]
+                parts = re.split(r'[,\n]', input_data)
+                keywords = [{"keyword": kw.strip(), "direction": ""} for kw in parts if kw.strip()]
         else:
             raise ValueError(f"不支持的输入数据类型: {type(input_data)}")
 
@@ -230,7 +245,7 @@ class AITitleGenerator(AINode):
         self.logger.info(f"输入验证通过，共 {len(keywords)} 个关键词")
         return keywords
 
-    def _create_batches(self, keywords: List[str]) -> List[List[str]]:
+    def _create_batches(self, keywords: List[Dict[str, str]]) -> List[List[Dict[str, str]]]:
         """创建处理批次"""
         batch_size = min(self.batch_size, 20)  # 限制最大批次大小
         batches = []
@@ -242,16 +257,18 @@ class AITitleGenerator(AINode):
         self.logger.debug(f"创建 {len(batches)} 个批次，每批最多 {batch_size} 个关键词")
         return batches
 
-    def _process_batch(self, batch: List[str]) -> TitleGenerationResult:
+    def _process_batch(self, batch: List[Dict[str, str]]) -> TitleGenerationResult:
         """处理单个批次"""
         generated_titles = []
         title_sources = {}
         confidence_scores = {}
 
-        for keyword in batch:
+        for input_item in batch:
+            keyword = input_item["keyword"]
+            direction = input_item.get("direction", "")
             try:
                 # 为每个关键词生成标题
-                titles = self._generate_titles_for_keyword(keyword)
+                titles = self._generate_titles_for_keyword(keyword, direction=direction)
 
                 if titles:
                     generated_titles.extend(titles)
@@ -261,7 +278,7 @@ class AITitleGenerator(AINode):
                     self.stats["titles_generated"] += len(titles)
                 else:
                     # 生成默认标题
-                    default_title = self._generate_default_title(keyword)
+                    default_title = self._generate_default_title(keyword, direction=direction)
                     generated_titles.append(default_title)
                     title_sources[default_title] = keyword
                     confidence_scores[default_title] = 0.5  # 中等置信度
@@ -270,7 +287,7 @@ class AITitleGenerator(AINode):
             except Exception as e:
                 self.logger.error(f"关键词标题生成失败: {keyword}, 错误: {e}")
                 # 生成默认标题
-                default_title = self._generate_default_title(keyword)
+                default_title = self._generate_default_title(keyword, direction=direction)
                 generated_titles.append(default_title)
                 title_sources[default_title] = keyword
                 confidence_scores[default_title] = 0.3  # 低置信度
@@ -283,16 +300,16 @@ class AITitleGenerator(AINode):
             metadata={}
         )
 
-    def _process_batch_with_fallback(self, batch: List[str]) -> TitleGenerationResult:
+    def _process_batch_with_fallback(self, batch: List[Dict[str, str]]) -> TitleGenerationResult:
         """使用备用模型处理批次"""
         # 当前实现与主模型相同，但使用备用AI客户端
         # 在实际应用中，这里可以调用不同的AI模型
         return self._process_batch(batch)
 
-    def _generate_titles_for_keyword(self, keyword: str) -> List[str]:
+    def _generate_titles_for_keyword(self, keyword: str, direction: str = "") -> List[str]:
         """为单个关键词生成标题"""
         # 准备消息
-        messages = self._prepare_messages(keyword)
+        messages = self._prepare_messages(keyword, direction=direction)
 
         # 获取AI客户端
         ai_client = get_ai_client("title_generator", use_fallback=False)
@@ -302,7 +319,7 @@ class AITitleGenerator(AINode):
         max_tokens = self.prompt_template.get("parameters", {}).get("max_tokens", 500)
 
         # 调用AI
-        self.logger.debug(f"调用AI生成标题: {keyword}")
+        self.logger.debug(f"调用AI生成标题: {keyword}", direction=direction)
         response = ai_client.chat_completion(
             messages=messages,
             temperature=temperature,
@@ -324,6 +341,7 @@ class AITitleGenerator(AINode):
         self.logger.debug(
             f"标题生成完成",
             keyword=keyword,
+            direction=direction,
             titles_count=len(titles),
             titles_preview=titles[:2] if titles else [],
             tokens_used=response.usage.get("total_tokens", 0),
@@ -332,7 +350,7 @@ class AITitleGenerator(AINode):
 
         return titles
 
-    def _prepare_messages(self, keyword: str) -> List[AIMessage]:
+    def _prepare_messages(self, keyword: str, direction: str = "") -> List[AIMessage]:
         """准备AI消息"""
         # 获取Prompt模板
         system_prompt = self.prompt_template.get("system", "")
@@ -344,7 +362,9 @@ class AITitleGenerator(AINode):
             keyword=keyword,
             max_titles=self.max_titles_per_keyword,
             min_words=min_words,
-            max_words=max_words
+            max_words=max_words,
+            direction=direction,
+            title_angle=direction,
         )
 
         # 创建消息
@@ -411,25 +431,34 @@ class AITitleGenerator(AINode):
 
         return unique_titles
 
-    def _generate_default_title(self, keyword: str) -> str:
+    def _generate_default_title(self, keyword: str, direction: str = "") -> str:
         """生成默认标题"""
         # 简单的标题模板
-        templates = [
-            f"Complete Guide to {keyword}",
-            f"{keyword}: Everything You Need to Know",
-            f"The Ultimate {keyword} Handbook",
-            f"Professional Guide to {keyword}",
-            f"{keyword} Solutions and Applications",
-        ]
+        if direction:
+            templates = [
+                f"Complete Guide to {keyword}: {direction}",
+                f"{keyword}: {direction}",
+                f"The Ultimate {keyword} Handbook for {direction}",
+                f"Professional Guide to {keyword} for {direction}",
+                f"{keyword} Solutions and Applications: {direction}",
+            ]
+        else:
+            templates = [
+                f"Complete Guide to {keyword}",
+                f"{keyword}: Everything You Need to Know",
+                f"The Ultimate {keyword} Handbook",
+                f"Professional Guide to {keyword}",
+                f"{keyword} Solutions and Applications",
+            ]
 
         # 选择第一个模板
         default_title = templates[0]
-        self.logger.debug(f"生成默认标题: {keyword} -> {default_title}")
+        self.logger.debug(f"生成默认标题: {keyword} -> {default_title}", direction=direction)
         return default_title
 
-    def _generate_default_titles(self, keywords: List[str]) -> List[str]:
+    def _generate_default_titles(self, keywords: List[Dict[str, str]]) -> List[str]:
         """为关键词列表生成默认标题"""
-        return [self._generate_default_title(kw) for kw in keywords]
+        return [self._generate_default_title(item["keyword"], item.get("direction", "")) for item in keywords]
 
     def _log_statistics(self, titles: List[str]) -> None:
         """记录统计信息"""
@@ -498,7 +527,7 @@ class AITitleGenerator(AINode):
 
 # 工具函数
 def generate_titles_with_ai(
-    keywords: List[str],
+    keywords: List[Any],
     batch_size: int = 10,
     max_titles_per_keyword: int = 1,
     **kwargs

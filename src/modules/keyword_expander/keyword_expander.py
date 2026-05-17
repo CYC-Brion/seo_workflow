@@ -63,6 +63,8 @@ class KeywordExpander(DataProcessingNode):
                 - google_api_key: Google API密钥（可选）
                 - google_search_engine_id: Google搜索引擎ID（可选）
                 - http_proxy: HTTP 代理地址，如 http://127.0.0.1:7890（可选）
+                - enable_google_browser_fallback: 是否启用 Google 浏览器模拟兜底（默认: False）
+                - browser_fallback_timeout_seconds: 浏览器兜底超时时间（默认: 20）
         """
         config = config or {}
         super().__init__(node_id, "keyword_expander", config)
@@ -74,6 +76,8 @@ class KeywordExpander(DataProcessingNode):
         self.google_api_key = config.get("google_api_key")
         self.google_search_engine_id = config.get("google_search_engine_id")
         self.http_proxy = config.get("http_proxy")
+        self.enable_google_browser_fallback = config.get("enable_google_browser_fallback", False)
+        self.browser_fallback_timeout_seconds = config.get("browser_fallback_timeout_seconds", 20)
 
         # 检查是否配置了Google API
         self.has_google_api = bool(self.google_api_key and self.google_search_engine_id)
@@ -111,6 +115,7 @@ class KeywordExpander(DataProcessingNode):
             "total_expansions": 0,
             "api_requests": 0,
             "google_suggest_requests": 0,
+            "google_browser_fallback_requests": 0,
             "bing_suggest_requests": 0,
             "retry_attempts": 0,
         }
@@ -120,6 +125,7 @@ class KeywordExpander(DataProcessingNode):
             config={
                 "max_expansions_per_keyword": self.max_expansions_per_keyword,
                 "has_google_api": self.has_google_api,
+                "enable_google_browser_fallback": self.enable_google_browser_fallback,
                 "max_retries": self.max_retries,
                 "http_proxy": self.http_proxy,
             }
@@ -227,10 +233,10 @@ class KeywordExpander(DataProcessingNode):
         """扩展单个关键词
 
         同时查询 Google Suggest + Bing Suggest（以及可选的 Google Custom Search API），
-        两个渠道都必须成功，任意失败即报错。合并去重后返回。
+        只要任一来源成功就继续。合并去重后返回。
         """
         all_expansions: List[str] = []
-        errors: List[str] = []
+        source_errors: List[str] = []
 
         # 1. Google Custom Search API（需配置 API 密钥）
         if self.has_google_api:
@@ -244,41 +250,60 @@ class KeywordExpander(DataProcessingNode):
             except Exception as e:
                 err_msg = f"Google Custom Search API: {e}"
                 self.logger.warning(err_msg)
-                errors.append(err_msg)
+                source_errors.append(err_msg)
 
-        # 2. Google Suggest（必须成功）
+        # 2. Google Suggest（优先使用公开端点；可选浏览器兜底）
         self.logger.debug(f"尝试 Google Suggest: {keyword}")
+        google_expansions: List[str] = []
+        google_error: Optional[Exception] = None
         try:
-            expansions = self._get_google_suggestions(keyword)
-            if not expansions:
+            google_expansions = self._get_google_suggestions(keyword)
+            if google_expansions:
+                self.stats["google_suggest_requests"] += 1
+                all_expansions.extend(google_expansions)
+                self.logger.debug(f"Google Suggest 成功", keyword=keyword, count=len(google_expansions))
+            else:
                 raise RuntimeError("Google Suggest 返回空结果")
-            self.stats["google_suggest_requests"] += 1
-            all_expansions.extend(expansions)
-            self.logger.debug(f"Google Suggest 成功", keyword=keyword, count=len(expansions))
         except Exception as e:
-            err_msg = f"Google Suggest 失败: {e}"
-            self.logger.error(err_msg)
-            raise RuntimeError(
-                f"关键词 '{keyword}': Google Suggest 不可用 — {e}"
-                + ("\n  提示: 中国大陆需要配置 http_proxy 代理访问 Google"
-                   if not self.http_proxy else "")
-            ) from e
+            google_error = e
+            self.logger.warning(f"Google Suggest 失败: {e}")
+            source_errors.append(f"Google Suggest: {e}")
 
-        # 3. Bing Suggest（必须成功）
+        if not google_expansions and self.enable_google_browser_fallback:
+            self.logger.debug(f"尝试 Google 浏览器模拟兜底: {keyword}")
+            try:
+                browser_expansions = self._get_google_suggestions_via_browser(keyword)
+                if browser_expansions:
+                    self.stats["google_browser_fallback_requests"] += 1
+                    all_expansions.extend(browser_expansions)
+                    google_expansions = browser_expansions
+                    self.logger.debug(
+                        f"Google 浏览器兜底成功",
+                        keyword=keyword,
+                        count=len(browser_expansions)
+                    )
+            except Exception as e:
+                self.logger.warning(f"Google 浏览器兜底失败: {e}")
+                source_errors.append(f"Google Browser Fallback: {e}")
+
+        # 3. Bing Suggest（与 Google 并行兜底，任一成功即可）
         self.logger.debug(f"尝试 Bing Suggest: {keyword}")
+        bing_expansions: List[str] = []
         try:
-            expansions = self._get_bing_suggestions(keyword)
-            if not expansions:
+            bing_expansions = self._get_bing_suggestions(keyword)
+            if bing_expansions:
+                self.stats["bing_suggest_requests"] += 1
+                all_expansions.extend(bing_expansions)
+                self.logger.debug(f"Bing Suggest 成功", keyword=keyword, count=len(bing_expansions))
+            else:
                 raise RuntimeError("Bing Suggest 返回空结果")
-            self.stats["bing_suggest_requests"] += 1
-            all_expansions.extend(expansions)
-            self.logger.debug(f"Bing Suggest 成功", keyword=keyword, count=len(expansions))
         except Exception as e:
-            err_msg = f"Bing Suggest 失败: {e}"
-            self.logger.error(err_msg)
-            raise RuntimeError(
-                f"关键词 '{keyword}': Bing Suggest 不可用 — {e}"
-            ) from e
+            self.logger.warning(f"Bing Suggest 失败: {e}")
+            source_errors.append(f"Bing Suggest: {e}")
+
+        if not all_expansions:
+            error_text = "; ".join(source_errors) if source_errors else "无可用扩展来源"
+            raise RuntimeError(f"关键词 '{keyword}': 所有扩展来源都不可用 — {error_text}")
 
         # 合并去重（Google + Bing 可能有重复建议）
         unique: List[str] = []
@@ -406,6 +431,73 @@ class KeywordExpander(DataProcessingNode):
                 unique_expansions.append(exp)
 
         return unique_expansions[:self.max_expansions_per_keyword]
+
+    def _get_google_suggestions_via_browser(self, keyword: str) -> List[str]:
+        """通过浏览器模拟获取 Google 搜索建议（可选兜底）"""
+        try:
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+            from playwright.sync_api import sync_playwright
+        except Exception as e:
+            self.logger.warning(f"Playwright 未安装，无法启用浏览器兜底: {e}")
+            return []
+
+        search_url = "https://www.google.com/?hl=en"
+        suggestions: List[str] = []
+
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                page = browser.new_page(user_agent=self.USER_AGENT)
+                page.set_default_timeout(int(self.browser_fallback_timeout_seconds * 1000))
+                page.goto(search_url, wait_until="domcontentloaded")
+
+                search_box = page.locator("textarea[name='q'], input[name='q']").first
+                search_box.click()
+                page.keyboard.type(keyword, delay=80)
+
+                try:
+                    page.wait_for_timeout(1200)
+                except Exception:
+                    pass
+
+                selectors = [
+                    "div[role='listbox'] [role='option']",
+                    "div[role='listbox'] li",
+                    "ul[role='listbox'] li",
+                    "ul[role='listbox'] div",
+                    "[aria-label='Search suggestions'] li",
+                ]
+
+                for selector in selectors:
+                    try:
+                        locator = page.locator(selector)
+                        if locator.count() > 0:
+                            suggestions.extend(locator.all_inner_texts())
+                    except PlaywrightTimeoutError:
+                        continue
+                    except Exception:
+                        continue
+
+                browser.close()
+
+        except Exception as e:
+            self.logger.warning(f"浏览器模拟获取 Google Suggest 失败: {e}")
+            return []
+
+        cleaned: List[str] = []
+        seen: set = set()
+        keyword_lower = keyword.lower()
+        for item in suggestions:
+            suggestion = re.sub(r"\s+", " ", str(item)).strip()
+            if not suggestion:
+                continue
+            suggestion_lower = suggestion.lower()
+            if suggestion_lower == keyword_lower or suggestion_lower in seen:
+                continue
+            seen.add(suggestion_lower)
+            cleaned.append(suggestion)
+
+        return cleaned[:self.max_expansions_per_keyword]
 
     def _get_bing_suggestions(self, keyword: str) -> List[str]:
         """获取Bing搜索建议（下拉框推荐）

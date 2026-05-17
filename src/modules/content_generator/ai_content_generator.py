@@ -19,6 +19,7 @@ from src.utils import (
     AIMessage,
     AIError,
 )
+from config.internal_links_config import get_default_internal_link_rules
 
 
 @dataclass
@@ -54,6 +55,8 @@ class AIContentGenerator(AINode):
                 - html_format: 是否输出HTML格式（默认: True）
                 - include_subheadings: 是否包含小标题（默认: True）
                 - include_bullet_points: 是否包含要点列表（默认: True）
+                - internal_linking_enabled: 是否启用站内链接自动插入（默认: True）
+                - max_internal_links_per_article: 每篇文章最多插入多少个站内链接（默认: 4）
         """
         config = config or {}
         super().__init__(node_id, "content_generator", config)
@@ -68,6 +71,12 @@ class AIContentGenerator(AINode):
         self.html_format = config.get("html_format", True)
         self.include_subheadings = config.get("include_subheadings", True)
         self.include_bullet_points = config.get("include_bullet_points", True)
+        self.internal_linking_enabled = config.get("internal_linking_enabled", True)
+        self.max_internal_links_per_article = config.get("max_internal_links_per_article", 4)
+        self.internal_link_rules = config.get(
+            "internal_link_rules",
+            get_default_internal_link_rules(),
+        )
 
         # 从配置获取Prompt模板
         self.prompt_template = self._load_prompt_template()
@@ -97,6 +106,7 @@ class AIContentGenerator(AINode):
                 "enable_fallback": self.enable_fallback,
                 "language": self.language,
                 "html_format": self.html_format,
+                "internal_linking_enabled": self.internal_linking_enabled,
             }
         )
 
@@ -233,17 +243,32 @@ class AIContentGenerator(AINode):
                     # 期望包含 keyword 和 title
                     keyword = item.get("keyword", "")
                     title = item.get("title", "")
+                    direction = item.get("direction", item.get("title_angle", item.get("pillar_direction", "")))
+                    lane = item.get("lane", "")
+                    internal_link_targets = item.get("internal_link_targets", "")
                     if keyword and title:
-                        inputs.append({"keyword": str(keyword).strip(), "title": str(title).strip()})
+                        inputs.append({
+                            "keyword": str(keyword).strip(),
+                            "title": str(title).strip(),
+                            "direction": str(direction).strip(),
+                            "lane": str(lane).strip(),
+                            "internal_link_targets": str(internal_link_targets).strip(),
+                        })
                     elif keyword:
                         # 只有关键词，使用默认标题
                         default_title = f"Complete Guide to {keyword}"
-                        inputs.append({"keyword": str(keyword).strip(), "title": default_title})
+                        inputs.append({
+                            "keyword": str(keyword).strip(),
+                            "title": default_title,
+                            "direction": str(direction).strip(),
+                            "lane": str(lane).strip(),
+                            "internal_link_targets": str(internal_link_targets).strip(),
+                        })
                     else:
                         self.logger.warning(f"跳过无效的字典项: {item}")
                 elif isinstance(item, str):
                     # 只有关键词字符串
-                    inputs.append({"keyword": item.strip(), "title": f"Complete Guide to {item.strip()}"})
+                    inputs.append({"keyword": item.strip(), "title": f"Complete Guide to {item.strip()}", "direction": "", "lane": "", "internal_link_targets": ""})
                 else:
                     self.logger.warning(f"跳过不支持的类型: {type(item)}")
 
@@ -251,8 +276,17 @@ class AIContentGenerator(AINode):
             # 单个字典输入
             keyword = input_data.get("keyword", "")
             title = input_data.get("title", "")
+            direction = input_data.get("direction", input_data.get("title_angle", input_data.get("pillar_direction", "")))
+            lane = input_data.get("lane", "")
+            internal_link_targets = input_data.get("internal_link_targets", "")
             if keyword:
-                inputs.append({"keyword": str(keyword).strip(), "title": str(title).strip() if title else f"Complete Guide to {keyword}"})
+                inputs.append({
+                    "keyword": str(keyword).strip(),
+                    "title": str(title).strip() if title else f"Complete Guide to {keyword}",
+                    "direction": str(direction).strip(),
+                    "lane": str(lane).strip(),
+                    "internal_link_targets": str(internal_link_targets).strip(),
+                })
 
         elif isinstance(input_data, str):
             # 尝试解析JSON字符串
@@ -299,10 +333,13 @@ class AIContentGenerator(AINode):
             keyword = input_item["keyword"]
             title = input_item["title"]
             category = input_item.get("category", "")
+            direction = input_item.get("direction", "")
+            lane = input_item.get("lane", "")
+            internal_link_targets = input_item.get("internal_link_targets", "")
 
             try:
                 # 为每个输入生成内容
-                contents = self._generate_content_for_input(keyword, title, category)
+                contents = self._generate_content_for_input(keyword, title, category, direction=direction, lane=lane, internal_link_targets=internal_link_targets)
 
                 if contents:
                     generated_contents.extend(contents)
@@ -312,7 +349,7 @@ class AIContentGenerator(AINode):
                     self.stats["contents_generated"] += len(contents)
                 else:
                     # 生成默认内容
-                    default_content = self._generate_default_content(keyword, title)
+                    default_content = self._generate_default_content(keyword, title, direction=direction, lane=lane)
                     generated_contents.append(default_content)
                     content_sources[default_content] = keyword
                     confidence_scores[default_content] = 0.5  # 中等置信度
@@ -321,7 +358,7 @@ class AIContentGenerator(AINode):
             except Exception as e:
                 self.logger.error(f"内容生成失败: {keyword}, 错误: {e}")
                 # 生成默认内容
-                default_content = self._generate_default_content(keyword, title)
+                default_content = self._generate_default_content(keyword, title, direction=direction, lane=lane)
                 generated_contents.append(default_content)
                 content_sources[default_content] = keyword
                 confidence_scores[default_content] = 0.3  # 低置信度
@@ -340,10 +377,10 @@ class AIContentGenerator(AINode):
         # 在实际应用中，这里可以调用不同的AI模型
         return self._process_batch(batch)
 
-    def _generate_content_for_input(self, keyword: str, title: str, category: str = "") -> List[str]:
+    def _generate_content_for_input(self, keyword: str, title: str, category: str = "", direction: str = "", lane: str = "", internal_link_targets: str = "") -> List[str]:
         """为单个输入生成内容"""
         # 准备消息（根据分类选择 Prompt）
-        messages = self._prepare_messages(keyword, title, category)
+        messages = self._prepare_messages(keyword, title, category, direction=direction, lane=lane, internal_link_targets=internal_link_targets)
 
         # 获取分类对应的 prompt 模板参数
         prompt_tpl = self._get_prompt_for_category(category)
@@ -356,7 +393,7 @@ class AIContentGenerator(AINode):
         max_tokens = prompt_tpl.get("parameters", {}).get("max_tokens", 4000)
 
         # 调用AI
-        self.logger.debug(f"调用AI生成内容: {keyword} - {title}")
+        self.logger.debug(f"调用AI生成内容: {keyword} - {title}", direction=direction, lane=lane)
         response = ai_client.chat_completion(
             messages=messages,
             temperature=temperature,
@@ -387,7 +424,7 @@ class AIContentGenerator(AINode):
 
         return contents
 
-    def _prepare_messages(self, keyword: str, title: str, category: str = "") -> List[AIMessage]:
+    def _prepare_messages(self, keyword: str, title: str, category: str = "", direction: str = "", lane: str = "", internal_link_targets: str = "") -> List[AIMessage]:
         """准备AI消息（根据分类选择 Prompt）"""
         prompt_tpl = self._get_prompt_for_category(category)
         system_prompt = prompt_tpl.get("system", "")
@@ -399,7 +436,11 @@ class AIContentGenerator(AINode):
             title=title,
             word_count=self.target_word_count,
             industry=self.industry,
-            language=self.language
+            language=self.language,
+            direction=direction,
+            title_angle=direction,
+            lane=lane,
+            internal_link_targets=internal_link_targets,
         )
 
         # 创建消息
@@ -463,6 +504,8 @@ class AIContentGenerator(AINode):
             elif not re.search(r'<html|<body|<article|<div|<h\d|<p|<ul|<ol', content, re.IGNORECASE):
                 content = f'<article>{content}</article>'
 
+        content = self._apply_internal_links(content)
+
         # 在最终内容上缓存 slug 和 excerpt（key 为最终返回的 content 字符串）
         if extracted_slug or extracted_excerpt:
             self._article_meta[content] = {
@@ -471,6 +514,82 @@ class AIContentGenerator(AINode):
             }
 
         return content
+
+    def _apply_internal_links(self, content: str) -> str:
+        """根据内链规则自动插入站内链接"""
+        if not self.internal_linking_enabled or not self.html_format or not content:
+            return content
+
+        tokens = re.split(r'(<[^>]+>)', content)
+        used_urls: set = set()
+        inserted_count = 0
+        in_anchor = False
+
+        for index, token in enumerate(tokens):
+            if token.startswith("<"):
+                token_lower = token.lower()
+                if token_lower.startswith("<a ") or token_lower.startswith("<a>"):
+                    in_anchor = True
+                elif token_lower.startswith("</a"):
+                    in_anchor = False
+                continue
+
+            if in_anchor or inserted_count >= self.max_internal_links_per_article:
+                continue
+
+            updated_token = token
+            for rule in self.internal_link_rules:
+                url = rule.get("url", "")
+                if not url or url in used_urls:
+                    continue
+
+                replaced_token, replaced = self._replace_first_internal_link(updated_token, rule)
+                if replaced:
+                    updated_token = replaced_token
+                    used_urls.add(url)
+                    inserted_count += 1
+
+                if inserted_count >= self.max_internal_links_per_article:
+                    break
+
+            tokens[index] = updated_token
+
+            if inserted_count >= self.max_internal_links_per_article:
+                break
+
+        content_with_links = "".join(tokens)
+
+        if "https://yushengco.com/" not in content_with_links:
+            content_with_links += (
+                '<p style="line-height: 2; font-size: 16px;">'
+                'Learn more from our <a href="https://yushengco.com/">home page</a>.'
+                '</p>'
+            )
+
+        return content_with_links
+
+    def _replace_first_internal_link(self, text: str, rule: Dict[str, Any]) -> Tuple[str, bool]:
+        """在文本中替换第一个命中的关键词为内链"""
+        url = rule.get("url", "")
+        phrases = rule.get("phrases", [])
+
+        if not url or not phrases:
+            return text, False
+
+        ordered_phrases = sorted([phrase for phrase in phrases if phrase], key=len, reverse=True)
+
+        for phrase in ordered_phrases:
+            pattern = re.compile(rf'(?<!\w)({re.escape(phrase)})(?!\w)', re.IGNORECASE)
+
+            def _replacement(match: re.Match) -> str:
+                matched_text = match.group(1)
+                return f'<a href="{url}">{matched_text}</a>'
+
+            replaced_text, count = pattern.subn(_replacement, text, count=1)
+            if count > 0:
+                return replaced_text, True
+
+        return text, False
 
     def _clean_html_content(self, content: str) -> str:
         """清理HTML内容"""
@@ -486,13 +605,14 @@ class AIContentGenerator(AINode):
 
         return content.strip()
 
-    def _generate_default_content(self, keyword: str, title: str) -> str:
+    def _generate_default_content(self, keyword: str, title: str, direction: str = "", lane: str = "") -> str:
         """生成默认内容"""
         # 简单的文章模板
         if self.html_format:
             content = f'''<article>
     <h1>{title}</h1>
     <p>This comprehensive guide provides detailed information about {keyword} in the {self.industry} industry.</p>
+    <p>Content angle: {direction or "general"}. Lane: {lane or "standard"}.</p>
 
     <h2>Introduction to {keyword}</h2>
     <p>{keyword} plays a crucial role in modern {self.industry.lower()} applications. Understanding its features and applications is essential for industry professionals.</p>
@@ -543,7 +663,9 @@ Proper maintenance ensures optimal performance and longevity of {keyword.lower()
 Conclusion
 {keyword} remains an essential component in the {self.industry} industry, offering reliable performance and value for various applications.'''
 
-        self.logger.debug(f"生成默认内容: {keyword} -> {title}")
+        content = self._apply_internal_links(content)
+
+        self.logger.debug(f"生成默认内容: {keyword} -> {title}", direction=direction, lane=lane)
         return content
 
     def _generate_default_contents(self, inputs: List[Dict[str, str]]) -> List[str]:

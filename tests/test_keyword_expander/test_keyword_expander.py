@@ -163,8 +163,8 @@ class TestKeywordExpander:
             assert expander.stats["google_suggest_requests"] == 1
             assert expander.stats["bing_suggest_requests"] == 1
 
-    def test_expand_keyword_google_fail_raises(self):
-        """测试 Google 失败时立即报错（不再降级到仅用 Bing）"""
+    def test_expand_keyword_google_fail_bing_success(self):
+        """测试 Google 失败时仍可用 Bing 结果继续"""
         expander = KeywordExpander("test-expander")
 
         def mock_get(url, *args, **kwargs):
@@ -178,18 +178,46 @@ class TestKeywordExpander:
             return MagicMock()
 
         with patch.object(expander.session, 'get', side_effect=mock_get):
-            with pytest.raises(RuntimeError, match="Google Suggest 不可用"):
-                expander._expand_keyword("test")
+            expansions = expander._expand_keyword("test")
+            assert "bing suggestion 1" in expansions
+            assert "test" not in expansions
 
-    def test_expand_keyword_all_fail_raises_error(self):
-        """测试 Google 失败时抛出 RuntimeError"""
+    def test_expand_keyword_google_browser_fallback_used_when_enabled(self):
+        """测试 Google 失败时可选启用浏览器兜底"""
+        expander = KeywordExpander(
+            "test-expander",
+            {
+                "enable_google_browser_fallback": True,
+                "browser_fallback_timeout_seconds": 5,
+            }
+        )
+
+        def mock_get(url, *args, **kwargs):
+            if "suggestqueries.google.com" in url or "www.google.com/complete" in url:
+                raise requests.exceptions.ConnectionError("Google blocked")
+            elif "api.bing.com" in url:
+                resp = MagicMock()
+                resp.json.return_value = ["test", ["bing suggestion 1"]]
+                resp.raise_for_status.return_value = None
+                return resp
+            return MagicMock()
+
+        with patch.object(expander.session, 'get', side_effect=mock_get):
+            with patch.object(expander, '_get_google_suggestions_via_browser', return_value=["browser suggestion 1"]):
+                expansions = expander._expand_keyword("test")
+                assert "browser suggestion 1" in expansions
+                assert "bing suggestion 1" in expansions
+                assert expander.stats["google_browser_fallback_requests"] == 1
+
+    def test_expand_keyword_all_sources_fail_raises_error(self):
+        """测试所有扩展来源都失败时抛出异常"""
         expander = KeywordExpander("test-expander")
 
         def mock_get(url, *args, **kwargs):
             raise requests.exceptions.ConnectionError("Network down")
 
         with patch.object(expander.session, 'get', side_effect=mock_get):
-            with pytest.raises(RuntimeError, match="Google Suggest 不可用"):
+            with pytest.raises(RuntimeError, match="所有扩展来源都不可用"):
                 expander._expand_keyword("test")
 
     def test_execute_success(self):

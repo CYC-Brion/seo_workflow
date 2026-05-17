@@ -243,6 +243,23 @@ class TestAIContentGenerator:
         assert "  " not in cleaned  # 不应该有连续两个空格
         assert cleaned.strip() == cleaned
 
+    def test_apply_internal_links(self):
+        """测试自动插入站内链接"""
+        generator = AIContentGenerator("test-content-gen")
+
+        content = (
+            '<article><p>Our factory provides floor lamp accessories, OEM customization, '
+            'and a complete company profile for buyers.</p></article>'
+        )
+
+        linked = generator._apply_internal_links(content)
+
+        assert 'https://yushengco.com/product-category/floor-lamp-sets/' in linked
+        assert 'https://yushengco.com/services/' in linked
+        assert 'https://yushengco.com/about-us/' in linked
+        assert 'https://yushengco.com/' in linked
+        assert '<a href="https://yushengco.com/product-category/floor-lamp-sets/">floor lamp accessories</a>' in linked
+
     @patch('src.modules.content_generator.ai_content_generator.get_ai_client')
     def test_generate_content_for_input(self, mock_get_ai_client):
         """测试为单个输入生成内容"""

@@ -8,7 +8,9 @@ import sys
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from openpyxl import load_workbook
 
 from src.utils import get_logger, config_manager
 from src.modules import (
@@ -62,6 +64,114 @@ def build_publish_schedule(
         for index in range(total_posts)
     ]
     return "future", schedule_dates
+
+
+def _normalize_plan_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def load_workflow_plan(file_path: Path) -> List[Dict[str, str]]:
+    """Load optional plan sheet for mixed lane execution."""
+    try:
+        workbook = load_workbook(file_path, read_only=True, data_only=True)
+    except Exception as exc:
+        logger.warning(f"读取 plan sheet 失败: {exc}")
+        return []
+
+    if "plan" not in workbook.sheetnames:
+        return []
+
+    worksheet = workbook["plan"]
+    rows = list(worksheet.iter_rows(values_only=True))
+    if not rows:
+        return []
+
+    headers = [str(cell).strip().lower() if cell is not None else "" for cell in rows[0]]
+    plan_rows: List[Dict[str, str]] = []
+
+    for raw_row in rows[1:]:
+        row_data = {}
+        for index, header in enumerate(headers):
+            if not header:
+                continue
+            row_data[header] = raw_row[index] if index < len(raw_row) else None
+
+        keyword = _normalize_plan_value(row_data.get("keyword") or row_data.get("keywords"))
+        if not keyword:
+            continue
+
+        direction = _normalize_plan_value(
+            row_data.get("direction")
+            or row_data.get("title_angle")
+            or row_data.get("pillar_direction")
+        )
+        plan_rows.append({
+            "week": _normalize_plan_value(row_data.get("week")),
+            "lane": _normalize_plan_value(row_data.get("lane")),
+            "keyword": keyword,
+            "category": _normalize_plan_value(row_data.get("category")),
+            "direction": direction,
+            "title_angle": direction,
+            "internal_link_targets": _normalize_plan_value(row_data.get("internal_link_targets")),
+        })
+
+    return plan_rows
+
+
+def build_default_title(keyword: str, direction: str = "") -> str:
+    if direction:
+        return f"Complete Guide to {keyword}: {direction}"
+    return f"Complete Guide to {keyword}"
+
+
+def build_work_items(
+    filtered_keywords: List[str],
+    keyword_categories: Dict[str, str],
+    plan_rows: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict[str, str]]:
+    """Create the ordered workflow input items."""
+    filtered_lookup = {keyword.strip().lower() for keyword in filtered_keywords if keyword.strip()}
+    items: List[Dict[str, str]] = []
+
+    if plan_rows:
+        for row in plan_rows:
+            keyword = row.get("keyword", "").strip()
+            if not keyword or keyword.lower() not in filtered_lookup:
+                continue
+            category = row.get("category", "").strip() or keyword_categories.get(keyword, "")
+            if not category:
+                from config.wordpress_config import DEFAULT_AI_CATEGORY
+                category = DEFAULT_AI_CATEGORY
+
+            items.append({
+                "keyword": keyword,
+                "title": build_default_title(keyword, row.get("direction", "")),
+                "category": category,
+                "direction": row.get("direction", ""),
+                "lane": row.get("lane", ""),
+                "title_angle": row.get("title_angle", ""),
+                "internal_link_targets": row.get("internal_link_targets", ""),
+            })
+
+    if items:
+        return items
+
+    from config.wordpress_config import DEFAULT_AI_CATEGORY
+    fallback_items: List[Dict[str, str]] = []
+    for keyword in filtered_keywords:
+        category = keyword_categories.get(keyword, DEFAULT_AI_CATEGORY)
+        fallback_items.append({
+            "keyword": keyword,
+            "title": build_default_title(keyword),
+            "category": category,
+            "direction": "",
+            "lane": "",
+            "title_angle": "",
+            "internal_link_targets": "",
+        })
+    return fallback_items
 
 
 def setup_parser() -> argparse.ArgumentParser:
@@ -720,6 +830,10 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         if keywords:
             print(f"  预览: {keywords[:5]}{'...' if len(keywords) > 5 else ''}")
 
+        plan_rows = load_workflow_plan(input_path)
+        if plan_rows:
+            print(f"  [OK] plan sheet: {len(plan_rows)} 条混合排期项")
+
         # ============================
         # 步骤 2: 关键词扩展
         # ============================
@@ -728,6 +842,8 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         expander_config = {
             "max_expansions_per_keyword": 10,
             "request_delay_seconds": 2,
+            "enable_google_browser_fallback": os.getenv("ENABLE_GOOGLE_BROWSER_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"},
+            "browser_fallback_timeout_seconds": float(os.getenv("GOOGLE_BROWSER_FALLBACK_TIMEOUT_SECONDS", "20")),
         }
         http_proxy = os.getenv("HTTP_PROXY")
         if http_proxy:
@@ -787,6 +903,9 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
             print("  [FAIL] 筛选后无关键词，工作流终止")
             return 1
 
+        workflow_items = build_work_items(filtered_keywords, keyword_categories, plan_rows)
+        print(f"  [OK] 生成 {len(workflow_items)} 个最终内容任务")
+
         # ============================
         # 步骤 4: AI 标题生成
         # ============================
@@ -794,17 +913,17 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         print(f"\n[{step}/{total_steps}] AI 标题生成...")
         if dry_run:
             print("  [SKIP]  DRY-RUN: 使用默认标题")
-            titles = [f"Complete Guide to {kw}" for kw in filtered_keywords]
+            titles = [build_default_title(item["keyword"], item.get("direction", "")) for item in workflow_items]
         else:
             title_generator = AITitleGenerator("title_generator", config={
                 "batch_size": 10,
                 "max_titles_per_keyword": 1,
                 "enable_fallback": True,
             })
-            result = title_generator.execute(filtered_keywords)
+            result = title_generator.execute(workflow_items)
             if result.status.value != "completed":
                 print(f"  [WARN]  标题生成未完全成功，使用默认标题")
-                titles = [f"Complete Guide to {kw}" for kw in filtered_keywords]
+                titles = [build_default_title(item["keyword"], item.get("direction", "")) for item in workflow_items]
             else:
                 titles = result.output_data
         print(f"  [OK] 生成 {len(titles)} 个标题")
@@ -818,10 +937,18 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         print(f"\n[{step}/{total_steps}] AI 内容生成...")
         # 构建 content_generator 的输入格式
         content_inputs = []
-        for i, title in enumerate(titles):
-            kw = filtered_keywords[i] if i < len(filtered_keywords) else ""
-            cat = keyword_categories.get(kw, DEFAULT_AI_CATEGORY)
-            content_inputs.append({"keyword": kw, "title": title, "category": cat})
+        for i, item in enumerate(workflow_items):
+            title = titles[i] if i < len(titles) else item.get("title", build_default_title(item["keyword"], item.get("direction", "")))
+            cat = item.get("category", "") or keyword_categories.get(item["keyword"], DEFAULT_AI_CATEGORY)
+            content_inputs.append({
+                "keyword": item["keyword"],
+                "title": title,
+                "category": cat,
+                "direction": item.get("direction", ""),
+                "lane": item.get("lane", ""),
+                "title_angle": item.get("title_angle", ""),
+                "internal_link_targets": item.get("internal_link_targets", ""),
+            })
 
         if dry_run:
             print("  [SKIP]  DRY-RUN: 使用默认内容")
