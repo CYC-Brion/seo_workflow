@@ -146,6 +146,9 @@ WORDPRESS_MAX_RETRIES=3
 | `config/ai_models_config.py` | AI model configuration |
 | `config/settings.py` | Project-level settings |
 | `Guiding.md` | Detailed operational guide |
+| `keyword_library/seo_keyword_library_full.xlsx` | Full keyword library for long-cycle planning |
+| `keyword_library/seo_phase3_long_cycle.xlsx` | Primary heat-first execution workbook |
+| `keyword_library/seo_keyword_plan.md` | Keyword planning reference |
 
 ## Prompt Customization
 Prompts are managed in `config/prompts_config.py`.
@@ -157,6 +160,13 @@ Useful sections:
 - `CONTENT_PROMPT_TECHNICAL_GUIDES`
 - `CONTENT_PROMPT_INDUSTRY_INSIGHTS`
 - `CATEGORY_PROMPTS`
+
+Current prompt strategy is intentionally B2B-manufacturing oriented:
+
+- `pillar` topics should read like supplier comparison, sourcing, checklist, and decision-support content
+- `ordinary` topics should read like focused technical explainers around process, finish, QC, tolerance, and application
+- articles should sound like an experienced manufacturer or sourcing advisor, not a generic content site
+- conclusions should guide readers toward relevant product, service, or inquiry pages instead of ending with a generic summary
 
 ## Legacy GitHub Workflow
 `.github/workflows/auto-publish.yml` is retained only as a manual fallback for old draft-based publishing.

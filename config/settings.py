@@ -52,7 +52,12 @@ RETRY_DELAY = 5
 # 日志配置
 LOG_LEVEL = "INFO"
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_FILE = LOGS_DIR / "workflow.log"
+
+_log_file_override = os.getenv("SEO_LOG_FILE")
+if _log_file_override is not None:
+    LOG_FILE = Path(_log_file_override) if _log_file_override else None
+else:
+    LOG_FILE = LOGS_DIR / "workflow.log"
 
 # 开发模式
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"

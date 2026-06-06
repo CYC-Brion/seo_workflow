@@ -72,6 +72,52 @@ def _normalize_plan_value(value: Any) -> str:
     return str(value).strip()
 
 
+def load_keyword_metadata(file_path: Path) -> Tuple[Dict[str, Dict[str, str]], List[str]]:
+    """Load keyword sheet metadata and preserve workbook keyword order."""
+    try:
+        workbook = load_workbook(file_path, read_only=True, data_only=True)
+    except Exception as exc:
+        logger.warning(f"读取 keywords sheet 失败: {exc}")
+        return {}, []
+
+    if "keywords" not in workbook.sheetnames:
+        return {}, []
+
+    worksheet = workbook["keywords"]
+    rows = list(worksheet.iter_rows(values_only=True))
+    if not rows:
+        return {}, []
+
+    headers = [str(cell).strip().lower() if cell is not None else "" for cell in rows[0]]
+    metadata_lookup: Dict[str, Dict[str, str]] = {}
+    ordered_keywords: List[str] = []
+
+    for raw_row in rows[1:]:
+        row_data = {}
+        for index, header in enumerate(headers):
+            if not header:
+                continue
+            row_data[header] = raw_row[index] if index < len(raw_row) else None
+
+        keyword = _normalize_plan_value(row_data.get("keyword") or row_data.get("keywords"))
+        if not keyword:
+            continue
+
+        keyword_lower = keyword.lower()
+        ordered_keywords.append(keyword)
+        metadata_lookup[keyword_lower] = {
+            "keyword": keyword,
+            "category": _normalize_plan_value(row_data.get("category")),
+            "lane": _normalize_plan_value(row_data.get("lane")),
+            "priority": _normalize_plan_value(row_data.get("priority")),
+            "cluster": _normalize_plan_value(row_data.get("cluster")),
+            "internal_link_targets": _normalize_plan_value(row_data.get("internal_link_targets")),
+            "notes": _normalize_plan_value(row_data.get("notes")),
+        }
+
+    return metadata_lookup, ordered_keywords
+
+
 def load_workflow_plan(file_path: Path) -> List[Dict[str, str]]:
     """Load optional plan sheet for mixed lane execution."""
     try:
@@ -107,13 +153,20 @@ def load_workflow_plan(file_path: Path) -> List[Dict[str, str]]:
             or row_data.get("title_angle")
             or row_data.get("pillar_direction")
         )
+        title_angle = _normalize_plan_value(
+            row_data.get("title_angle")
+            or row_data.get("direction")
+            or row_data.get("pillar_direction")
+        )
         plan_rows.append({
             "week": _normalize_plan_value(row_data.get("week")),
             "lane": _normalize_plan_value(row_data.get("lane")),
             "keyword": keyword,
             "category": _normalize_plan_value(row_data.get("category")),
+            "priority": _normalize_plan_value(row_data.get("priority")),
+            "cluster": _normalize_plan_value(row_data.get("cluster")),
             "direction": direction,
-            "title_angle": direction,
+            "title_angle": title_angle,
             "internal_link_targets": _normalize_plan_value(row_data.get("internal_link_targets")),
         })
 
@@ -129,49 +182,117 @@ def build_default_title(keyword: str, direction: str = "") -> str:
 def build_work_items(
     filtered_keywords: List[str],
     keyword_categories: Dict[str, str],
+    keyword_metadata: Optional[Dict[str, Dict[str, str]]] = None,
+    ordered_keywords: Optional[List[str]] = None,
     plan_rows: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, str]]:
     """Create the ordered workflow input items."""
-    filtered_lookup = {keyword.strip().lower() for keyword in filtered_keywords if keyword.strip()}
+    filtered_order = [keyword.strip() for keyword in filtered_keywords if keyword.strip()]
+    filtered_lookup = {keyword.lower() for keyword in filtered_order}
+    metadata_lookup = keyword_metadata or {}
     items: List[Dict[str, str]] = []
+    planned_keywords = set()
+    priority_order = {"a": 0, "b": 1, "c": 2}
+
+    def build_item(
+        keyword: str,
+        category: str = "",
+        lane: str = "",
+        priority: str = "",
+        cluster: str = "",
+        direction: str = "",
+        title_angle: str = "",
+        internal_link_targets: str = "",
+    ) -> Dict[str, str]:
+        keyword_lower = keyword.lower()
+        metadata = metadata_lookup.get(keyword_lower, {})
+        from config.wordpress_config import DEFAULT_AI_CATEGORY
+
+        resolved_category = (
+            category.strip()
+            or keyword_categories.get(keyword, "")
+            or metadata.get("category", "")
+            or DEFAULT_AI_CATEGORY
+        )
+        resolved_direction = direction.strip()
+        resolved_title_angle = title_angle.strip() or resolved_direction
+
+        return {
+            "keyword": keyword,
+            "title": build_default_title(keyword, resolved_direction),
+            "category": resolved_category,
+            "lane": lane.strip() or metadata.get("lane", "") or "ordinary",
+            "priority": priority.strip() or metadata.get("priority", ""),
+            "cluster": cluster.strip() or metadata.get("cluster", ""),
+            "direction": resolved_direction,
+            "title_angle": resolved_title_angle,
+            "internal_link_targets": internal_link_targets.strip() or metadata.get("internal_link_targets", ""),
+        }
 
     if plan_rows:
         for row in plan_rows:
             keyword = row.get("keyword", "").strip()
             if not keyword or keyword.lower() not in filtered_lookup:
                 continue
-            category = row.get("category", "").strip() or keyword_categories.get(keyword, "")
-            if not category:
-                from config.wordpress_config import DEFAULT_AI_CATEGORY
-                category = DEFAULT_AI_CATEGORY
+            planned_keywords.add(keyword.lower())
+            items.append(
+                build_item(
+                    keyword=keyword,
+                    category=row.get("category", ""),
+                    lane=row.get("lane", ""),
+                    priority=row.get("priority", ""),
+                    cluster=row.get("cluster", ""),
+                    direction=row.get("direction", ""),
+                    title_angle=row.get("title_angle", ""),
+                    internal_link_targets=row.get("internal_link_targets", ""),
+                )
+            )
 
-            items.append({
-                "keyword": keyword,
-                "title": build_default_title(keyword, row.get("direction", "")),
-                "category": category,
-                "direction": row.get("direction", ""),
-                "lane": row.get("lane", ""),
-                "title_angle": row.get("title_angle", ""),
-                "internal_link_targets": row.get("internal_link_targets", ""),
-            })
+    ordinary_candidates: List[Tuple[int, int, Dict[str, str]]] = []
+    keyword_position = {keyword.lower(): index for index, keyword in enumerate(filtered_order)}
+    workbook_order = ordered_keywords or []
+    seen_ordinary = set()
 
-    if items:
-        return items
+    for index, keyword in enumerate(workbook_order):
+        keyword_lower = keyword.lower()
+        if keyword_lower not in filtered_lookup or keyword_lower in planned_keywords:
+            continue
+        metadata = metadata_lookup.get(keyword_lower, {})
+        lane = metadata.get("lane", "").strip().lower()
+        if lane == "pillar":
+            continue
 
-    from config.wordpress_config import DEFAULT_AI_CATEGORY
-    fallback_items: List[Dict[str, str]] = []
-    for keyword in filtered_keywords:
-        category = keyword_categories.get(keyword, DEFAULT_AI_CATEGORY)
-        fallback_items.append({
-            "keyword": keyword,
-            "title": build_default_title(keyword),
-            "category": category,
-            "direction": "",
-            "lane": "",
-            "title_angle": "",
-            "internal_link_targets": "",
-        })
-    return fallback_items
+        item = build_item(
+            keyword=metadata.get("keyword", keyword),
+            category=metadata.get("category", ""),
+            lane=metadata.get("lane", "ordinary"),
+            priority=metadata.get("priority", ""),
+            cluster=metadata.get("cluster", ""),
+            internal_link_targets=metadata.get("internal_link_targets", ""),
+        )
+        ordinary_candidates.append(
+            (priority_order.get(item["priority"].lower(), 99), index, item)
+        )
+        seen_ordinary.add(keyword_lower)
+
+    for keyword in filtered_order:
+        keyword_lower = keyword.lower()
+        if keyword_lower in planned_keywords or keyword_lower in seen_ordinary:
+            continue
+
+        item = build_item(keyword=keyword, lane="ordinary")
+        ordinary_candidates.append(
+            (
+                priority_order.get(item["priority"].lower(), 99),
+                len(workbook_order) + keyword_position.get(keyword_lower, 0),
+                item,
+            )
+        )
+
+    ordinary_candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
+    items.extend(item for _, _, item in ordinary_candidates)
+
+    return items
 
 
 def setup_parser() -> argparse.ArgumentParser:
@@ -830,6 +951,10 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         if keywords:
             print(f"  预览: {keywords[:5]}{'...' if len(keywords) > 5 else ''}")
 
+        keyword_metadata, ordered_keywords = load_keyword_metadata(input_path)
+        if keyword_metadata:
+            print(f"  [OK] keywords sheet metadata: {len(keyword_metadata)} 条")
+
         plan_rows = load_workflow_plan(input_path)
         if plan_rows:
             print(f"  [OK] plan sheet: {len(plan_rows)} 条混合排期项")
@@ -903,7 +1028,13 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
             print("  [FAIL] 筛选后无关键词，工作流终止")
             return 1
 
-        workflow_items = build_work_items(filtered_keywords, keyword_categories, plan_rows)
+        workflow_items = build_work_items(
+            filtered_keywords,
+            keyword_categories,
+            keyword_metadata=keyword_metadata,
+            ordered_keywords=ordered_keywords,
+            plan_rows=plan_rows,
+        )
         print(f"  [OK] 生成 {len(workflow_items)} 个最终内容任务")
 
         # ============================
@@ -946,15 +1077,27 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                 "category": cat,
                 "direction": item.get("direction", ""),
                 "lane": item.get("lane", ""),
+                "priority": item.get("priority", ""),
+                "cluster": item.get("cluster", ""),
                 "title_angle": item.get("title_angle", ""),
                 "internal_link_targets": item.get("internal_link_targets", ""),
             })
 
         if dry_run:
             print("  [SKIP]  DRY-RUN: 使用默认内容")
+            content_generator = AIContentGenerator("content_generator", config={
+                "batch_size": 3,
+                "target_word_count": 1500,
+                "html_format": True,
+                "enable_fallback": True,
+            })
             contents = [
-                f"<article><h2>{inp['title']}</h2><p>This is placeholder content for {inp['keyword']}. "
-                f"In production mode, this would be a ~1500 word SEO-optimized article.</p></article>"
+                content_generator._generate_default_content(
+                    inp["keyword"],
+                    inp["title"],
+                    direction=inp.get("direction", ""),
+                    lane=inp.get("lane", ""),
+                )
                 for inp in content_inputs
             ]
         else:
@@ -1008,10 +1151,11 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         article_meta = getattr(content_generator, '_article_meta', {}) if not dry_run else {}
         wp_inputs = []
         for i, title in enumerate(titles):
-            kw = filtered_keywords[i] if i < len(filtered_keywords) else ""
+            workflow_item = workflow_items[i] if i < len(workflow_items) else {}
+            kw = workflow_item.get("keyword", "")
             content = contents[i] if i < len(contents) else ""
             meta = article_meta.get(content, {})
-            cat_name = keyword_categories.get(kw, DEFAULT_AI_CATEGORY)
+            cat_name = workflow_item.get("category", "") or keyword_categories.get(kw, DEFAULT_AI_CATEGORY)
             post_schedule_date = post_schedule_dates[i] if i < len(post_schedule_dates) else None
             wp_inputs.append({
                 "title": title,

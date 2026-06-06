@@ -3,12 +3,13 @@
 ## 1. 项目目的
 这个项目用于把 Excel 关键词表自动处理成可发布到 WordPress 的 SEO 文章，主流程是：
 
-1. 读取 Excel 关键词
-2. 扩展长尾关键词
-3. AI 筛选行业相关关键词
-4. AI 生成标题
-5. AI 生成正文
-6. 发布到 WordPress
+1. 读取 Excel 关键词并去重
+2. 可选读取同文件里的 `plan` 表，组装混合发文顺序
+3. 扩展长尾关键词
+4. AI 筛选行业相关关键词
+5. AI 生成标题
+6. AI 生成正文并自动插入站内链接
+7. 计算排期并发布到 WordPress
 
 现在默认采用 WordPress 原生 `future` 定时发布，不再依赖 GitHub Actions 定时轮询草稿。
 
@@ -28,6 +29,8 @@
 - `keywords`：必填
 - `category`：可选
 - 如果不填 `category`，默认使用 `Technical Guides`
+- 如果要跑混合方案，可以额外加 `plan` 表，常用列有 `week`、`lane`、`keyword`、`category`、`direction`、`title_angle`、`internal_link_targets`
+- `lane` 只是运营分层标签，不会单独改变代码行为；真正控制标题和内容角度的是 `direction` / `title_angle`
 
 ## 3. 默认发布方式
 当前 `config/wordpress_config.py` 已配置为默认定时发布：
@@ -57,10 +60,12 @@ python -m src.cli.main workflow run 测试用例.xlsx
 
 这条命令会：
 
-- 自动读取 Excel
+- 自动读取 Excel，并先做关键词去重
+- 如果存在 `plan` 表，则优先按 `plan` 组装 pillar / 重点任务，再补上通过筛选的 ordinary 关键词
 - 自动扩词、筛词、生成标题和正文
-- 自动推送到 WordPress
-- 自动按默认排期写成 `Scheduled`
+- 正文阶段会自动插入站内链接
+- 自动计算排期并推送到 WordPress
+- 自动按默认排期写成 `future`，在 WordPress 后台显示为 `Scheduled`
 ## 5. 常用运行方式
 
 ### 5.1 使用默认排期
@@ -116,8 +121,10 @@ python -m src.cli.main workflow run 测试用例.xlsx --dry-run
 这通常不是报错，而是以下原因之一：
 
 - Excel 里原始关键词本来就少
+- Excel 读取阶段已经去重，重复关键词不会被重复保留
 - 关键词扩展接口没有返回太多长尾词
 - AI 筛选后保留下来的词不多
+- 如果你用了 `plan` 表，但对应关键词没有通过筛选，也不会进入最终发文任务
 
 当前项目的默认逻辑更接近：
 
@@ -129,6 +136,8 @@ python -m src.cli.main workflow run 测试用例.xlsx --dry-run
 2. 扩展出的有效长尾词数量
 3. AI 筛选后的剩余关键词数量
 
+如果你想让同一个 pillar 词输出多篇文章，不要在 `keywords` 表里重复堆同一个词；应该把它放进 `plan` 表里，用不同的 `direction` / `title_angle` 生成多条任务。
+
 ## 8. Prompt 修改
 所有 prompt 在 `config/prompts_config.py`。
 
@@ -139,6 +148,13 @@ python -m src.cli.main workflow run 测试用例.xlsx --dry-run
 - `CONTENT_PROMPT_TECHNICAL_GUIDES`：Technical Guides 正文风格
 - `CONTENT_PROMPT_INDUSTRY_INSIGHTS`：Industry Insights 正文风格
 - `CATEGORY_PROMPTS`：分类和 prompt 的映射
+
+当前推荐的内容调教方向：
+
+- `pillar` 文章优先写成 supplier comparison、buyer checklist、factory capability、OEM/ODM decision 这类高商业意图内容
+- `ordinary` 文章优先写成 process、finish、QC、tolerance、application 这类长尾技术内容
+- 正文要更像制造商或 sourcing advisor 的经验输出，而不是泛百科文章
+- 每篇文章都要回答买家为什么要关心、哪里容易踩坑、要验证什么、下一步应该看哪个页面或发起什么询盘
 
 如果只是想微调文章长度、风格或语气，优先改这里。
 
@@ -203,12 +219,12 @@ python -m src.cli.main workflow run 你的文件.xlsx
 
 ### 12.2 第二阶段：按混合方案铺内容
 
-这个阶段开始做内容增长，但不是所有词都一视同仁。
+这个阶段开始做内容增长，但不是所有词都一视同仁。真正落地时，建议用 `plan` 表控制发文顺序和方向，而不是只靠 `keywords` 表本身。
 
 建议分两类：
 
 - 普通词：保持 1 个关键词 -> 1 个标题 -> 1 篇文章
-- 支柱词：1 个关键词 -> 2 到 3 个不同角度的标题 -> 2 到 3 篇文章
+- 支柱词：1 个关键词在 `plan` 表里出现 2 到 3 次，用不同 `direction` / `title_angle` 拆成 2 到 3 篇文章
 
 适合做支柱扩张的关键词类型：
 
@@ -259,7 +275,7 @@ python -m src.cli.main workflow run 你的文件.xlsx
 建议从第 3 到第 6 周开始执行，内容上采用混合方案：
 
 - 普通词继续走 1 个关键词 -> 1 个标题 -> 1 篇文章的稳健模式
-- 支柱词单独加密度，1 个关键词可以拆成 2 到 3 个不同角度的标题和文章
+- 支柱词不要靠 `keywords` 表重复堆词，而是放到 `plan` 表里，用不同的 `direction` / `title_angle` 生成多篇
 - 每周先发 3 篇普通词内容，再补 1 到 2 篇支柱词专题
 - 每篇文章都反向链接到相关产品页或服务页
 
@@ -288,9 +304,10 @@ python -m src.cli.main workflow run 你的文件.xlsx
 实际操作上建议你这样分：
 
 1. `standard_keywords.xlsx`：普通词，走稳健模式，默认 1:1
-2. `pillar_keywords.xlsx`：支柱词，单独做扩张专题
-3. 每次发文前先确认分类是 `Technical Guides` 还是 `Industry Insights`
-4. 先发标准词，再发支柱词，最后按数据回补同主题内容
+2. `pillar_keywords.xlsx`：支柱词种子库，配合 `plan` 表写出不同方向
+3. `plan` 表：决定发文顺序、`lane`、`direction`、`title_angle`、内链目标
+4. 每次发文前先确认分类是 `Technical Guides` 还是 `Industry Insights`
+5. 先发标准词，再发支柱词，最后按数据回补同主题内容
 
 ### 13.5 你当前最适合的执行顺序
 
@@ -298,14 +315,14 @@ python -m src.cli.main workflow run 你的文件.xlsx
 
 1. 先完成转化底座
 2. 再用稳健模式持续发普通关键词内容
-3. 再挑 3 到 5 个支柱词做扩张
+3. 再挑 3 到 5 个支柱词做扩张，并用 `plan` 拆方向
 4. 再根据询盘数据决定是否扩大专题簇
 
 这样做的好处是：不会因为追流量把站点写散，也不会因为太保守而错过核心主题的流量机会。
 
 ### 13.6 第 2 阶段 8 周执行表
 
-这部分可以直接作为当前工作流的发文排期。建议每周发 3 篇，其中 2 篇走普通词稳健模式，1 篇放到支柱词专题簇里，先铺产品与技术流量，再把采购决策词补进来。
+这部分可以直接作为当前工作流的发文排期。建议每周发 3 篇，其中 2 篇走普通词稳健模式，1 篇放到支柱词专题簇里，先铺产品与技术流量，再把采购决策词补进来。真正跑的时候，优先用 `keyword_library/seo_phase3_long_cycle.xlsx`，因为它已经把 pillar 优先和 ordinary 后补的长周期规则固定下来了。
 
 如果你要直接跑工作流，可以把下面这 24 个关键词放进一个新的 Excel 文件里，保留 `keywords` 和 `category` 两列即可；其他列是给你做排期和人工检查用的，工作流会自动忽略。
 
@@ -322,7 +339,7 @@ python -m src.cli.main workflow run 你的文件.xlsx
 | 第 7 周 | aluminum lamp tube components / steel lamp tube supplier | custom lighting parts factory comparison | 把管件材料与供应商比较结合起来 | Tubes、Panels、Services |
 | 第 8 周 | surface treatment for lighting hardware / lighting parts quality control | factory audit checklist for lighting parts | 用工艺与 QC 词收口，增强成交信任 | 首页、QC 相关页、Contact |
 
-建议直接跑的 Excel 文件名可以用：`seo_phase2_workflow_pack.xlsx`
+建议直接跑的 Excel 文件名可以用：`keyword_library/seo_phase3_long_cycle.xlsx`
 
 这个文件里建议至少有两张表：
 
@@ -339,15 +356,15 @@ python -m src.cli.main workflow run 你的文件.xlsx
 
 ### 13.6.1 lane 怎么跑
 
-当前工作流本身只读取 `keywords` 和 `category`，所以 `lane` 只是你做运营分层的标记，不会自动改变代码行为。实际跑法建议如下：
+当前工作流本身会先读 `keywords` 表，再可选读 `plan` 表；现在 `plan` 只负责 pillar 优先级和方向覆盖，不再拦截 ordinary 关键词。实际跑法建议如下：
 
 1. `ordinary` lane：直接放进主工作流，走默认 1:1 稳健模式
 2. `pillar` lane：单独放到一个小文件里跑，优先用来做专题簇和转化页回链
-3. 如果你要先出普通词，再出 pillar 词，就先跑 `ordinary` 文件，再跑 `pillar` 文件
+3. 默认主入口是 `keyword_library/seo_phase3_long_cycle.xlsx`；`ordinary` 和 `pillar` 分拆文件只作为辅助运营文件
 
 ### 13.6.2 pillar 如何按不同方向输出
 
-当前版本里，Excel 读取器会按关键词去重，所以同一个 `keywords` 值重复出现时，只会保留一条。也就是说，**不改代码的情况下，不能靠重复同一个 pillar 关键词来做多方向输出**。
+当前版本里，Excel 读取器会按关键词去重，所以同一个 `keywords` 值重复出现时，只会保留一条。也就是说，**不能靠在 `keywords` 表里重复同一个 pillar 关键词来做多方向输出**。
 
 可落地的做法有两种：
 
@@ -358,7 +375,7 @@ python -m src.cli.main workflow run 你的文件.xlsx
    - 同一个主题簇里，分别用 `What Is`、`How to Choose`、`Comparison`、`Checklist` 这几类标题角度去跑
    - 这样即使主题接近，内容意图也会明显不同
 
-如果你后面想让“同一个 pillar 关键词”稳定输出多个方向，建议再加一个 `pillar_direction` 列，并让标题生成 prompt 读取这个列作为约束；那就需要改代码，不只是改 Excel。
+如果你后面想让“同一个 pillar 关键词”稳定输出多个方向，正确做法是把它写进 `plan` 表多次，并让每一行带不同的 `direction` 或 `title_angle`；现有代码已经会读取这些字段。
 
 ### 13.7 标题和内容模板
 
