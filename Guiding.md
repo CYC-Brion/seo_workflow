@@ -61,7 +61,6 @@ python -m src.cli.main workflow run 测试用例.xlsx
 - 自动扩词、筛词、生成标题和正文
 - 自动推送到 WordPress
 - 自动按默认排期写成 `Scheduled`
-
 ## 5. 常用运行方式
 
 ### 5.1 使用默认排期
@@ -153,21 +152,6 @@ python -m src.cli.main workflow run 测试用例.xlsx --dry-run
 | `config/settings.py` | 项目全局配置 |
 | `.env` | API Key 和环境变量 |
 
-WordPress 账号信息现在应写在 `.env`，不再直接写进 `config/wordpress_config.py`。
-
-建议至少配置：
-
-```env
-WORDPRESS_URL=https://yushengco.com/
-WORDPRESS_USERNAME=
-WORDPRESS_PASSWORD=
-WORDPRESS_APPLICATION_PASSWORD=
-SCHEDULE_POSTS=true
-DEFAULT_SCHEDULE_HOURS=1
-DEFAULT_SCHEDULE_INTERVAL_HOURS=1
-WORDPRESS_TIMEZONE=UTC
-```
-
 ## 10. WordPress 分类扩展
 如果你要新增文章分类：
 
@@ -192,7 +176,203 @@ python -m src.cli.main workflow run 你的文件.xlsx
    - 分类是否正确
 4. 等待自动发布时间到达，确认文章自动上线
 
-## 12. 注意事项
+## 12. 企业 SEO 获客三阶段策略
 
+如果你的目标是通过 SEO 获取企业询盘，建议不要只追求流量，也不要一开始就把所有关键词都做成扩张型内容。更适合你的，是“默认稳健 + 少量支柱词扩张”的混合方案。
+
+### 12.1 第一阶段：先搭转化底座
+
+这个阶段的目标不是追求最大流量，而是确保来了流量能转化。
+
+重点先完善这些页面：
+
+1. 首页
+2. 产品分类页
+3. 核心产品页
+4. 服务页
+5. 关于我们
+6. 联系我们 / RFQ 页面
+
+这个阶段要重点补齐：
+
+- 工厂实力说明
+- 产品参数和应用场景
+- 认证、测试、专利、案例
+- 明确的询盘入口
+- FAQ 和常见问题
+
+### 12.2 第二阶段：按混合方案铺内容
+
+这个阶段开始做内容增长，但不是所有词都一视同仁。
+
+建议分两类：
+
+- 普通词：保持 1 个关键词 -> 1 个标题 -> 1 篇文章
+- 支柱词：1 个关键词 -> 2 到 3 个不同角度的标题 -> 2 到 3 篇文章
+
+适合做支柱扩张的关键词类型：
+
+- lighting hardware manufacturer
+- OEM vs ODM lighting hardware
+- lighting hardware supplier comparison
+- how to choose a reliable lamp parts manufacturer
+
+适合继续稳健推进的关键词类型：
+
+- 产品词
+- 材料词
+- 结构件词
+- 规格词
+
+### 12.3 第三阶段：根据数据放大有效主题
+
+这个阶段的核心是用数据决定下一批内容，而不是凭感觉堆量。
+
+重点看这些指标：
+
+- 搜索曝光量
+- 点击率
+- 页面停留时间
+- 询盘量
+- 哪些主题能带来高意图访问
+
+如果某类词带来更多询盘，就继续围绕它做同主题扩展；如果某些词只有流量没有转化，就补充页面的 CTA、FAQ、案例和对比内容。
+
+## 13. 适合你官网的 SEO 获客路线图
+
+下面这套路线图更适合你现在的站点结构，可以直接和当前工作流配合使用。
+
+### 13.1 第 1 阶段：先把转化页面做扎实
+
+建议先做 1 到 2 周，完成这些页面：
+
+1. 首页：突出工厂、产品、能力、询盘入口
+2. 产品分类页：Floor Lamp Sets、Wall Lamp Sets、Table Lamp Sets、Custom Made Parts 等
+3. 核心产品页：每个核心产品至少 1 页，写清材料、尺寸、工艺、应用
+4. 服务页：ODM / OEM / 深度合作 / 设计支持 / QC / 交付
+5. 联系页：表单、邮箱、电话、WhatsApp、询盘按钮
+
+这一阶段的目标是：让任何搜索进来的企业客户，都能快速看懂你能做什么、怎么合作、怎么联系你。
+
+### 13.2 第 2 阶段：内容流量和转化并行
+
+建议从第 3 到第 6 周开始执行，内容上采用混合方案：
+
+- 普通词继续走 1 个关键词 -> 1 个标题 -> 1 篇文章的稳健模式
+- 支柱词单独加密度，1 个关键词可以拆成 2 到 3 个不同角度的标题和文章
+- 每周先发 3 篇普通词内容，再补 1 到 2 篇支柱词专题
+- 每篇文章都反向链接到相关产品页或服务页
+
+内容配比建议：
+
+- 60% 产品与技术说明
+- 25% 采购与供应商对比
+- 15% 行业趋势与品牌能力说明
+
+这阶段文章长度建议保持在 1200 到 1800 字，支柱专题可以到 1800 到 2200 字，但前提是内容角度必须明显不同，不能重复。
+
+### 13.3 第 3 阶段：放大有效词，做专题簇
+
+当你看到某些页面开始稳定带来曝光和询盘后，就可以把它们做成专题簇。
+
+举例：
+
+- 主词：lighting hardware manufacturer
+- 子词：lighting hardware material selection / lighting hardware supplier comparison / OEM vs ODM lighting hardware
+- 支撑页：产品页、服务页、FAQ、案例页
+
+这个阶段要做的不是无脑加文章，而是把一个主题做深、做全、做成搜索引擎和客户都能读懂的专题。
+
+### 13.4 Excel 和工作流怎么配合
+
+实际操作上建议你这样分：
+
+1. `standard_keywords.xlsx`：普通词，走稳健模式，默认 1:1
+2. `pillar_keywords.xlsx`：支柱词，单独做扩张专题
+3. 每次发文前先确认分类是 `Technical Guides` 还是 `Industry Insights`
+4. 先发标准词，再发支柱词，最后按数据回补同主题内容
+
+### 13.5 你当前最适合的执行顺序
+
+推荐顺序是：
+
+1. 先完成转化底座
+2. 再用稳健模式持续发普通关键词内容
+3. 再挑 3 到 5 个支柱词做扩张
+4. 再根据询盘数据决定是否扩大专题簇
+
+这样做的好处是：不会因为追流量把站点写散，也不会因为太保守而错过核心主题的流量机会。
+
+### 13.6 第 2 阶段 8 周执行表
+
+这部分可以直接作为当前工作流的发文排期。建议每周发 3 篇，其中 2 篇走普通词稳健模式，1 篇放到支柱词专题簇里，先铺产品与技术流量，再把采购决策词补进来。
+
+如果你要直接跑工作流，可以把下面这 24 个关键词放进一个新的 Excel 文件里，保留 `keywords` 和 `category` 两列即可；其他列是给你做排期和人工检查用的，工作流会自动忽略。
+
+这里的 24 个词不是全部内容库，而是第 2 阶段的“种子词”：8 周 × 每周 3 篇 = 24 篇起跑内容。它们的作用是先把 3 条内容通道铺起来，后面再根据表现继续扩展同主题的二级词和 FAQ 词。
+
+| 周次 | 普通词 | 支柱词 | 核心目标 | 主要内链落点 |
+|------|--------|--------|----------|--------------|
+| 第 1 周 | lighting hardware components guide / lighting hardware supplier comparison | lighting hardware manufacturer | 先把主词做成支柱，再用比较词接住决策流量 | 首页、About Us、Services |
+| 第 2 周 | lighting manufacturing process / lighting fixture assembly process | lighting hardware sourcing guide | 建立制造流程与采购流程信任 | 首页、Services、RFQ 页面 |
+| 第 3 周 | floor lamp parts manufacturer / floor lamp kit accessory manufacturer | floor lamp parts supplier review criteria | 抢占 Floor Lamp 相关长尾流量 | Floor Lamp Sets、Custom Made Parts |
+| 第 4 周 | wall lamp parts manufacturer / wall lamp bracket hardware | wall lamp accessory supplier selection | 把墙灯结构件和采购词串起来 | Wall Lamp Sets、Services |
+| 第 5 周 | table lamp parts supplier / table lamp support structure | table lamp hardware quality comparison | 覆盖台灯结构与质量决策词 | Table Lamp Sets、About Us |
+| 第 6 周 | custom metal hardware parts / machined metal parts factory | OEM vs ODM lighting hardware | 推进定制与合作模式转化 | Custom Made Parts、Services、RFQ |
+| 第 7 周 | aluminum lamp tube components / steel lamp tube supplier | custom lighting parts factory comparison | 把管件材料与供应商比较结合起来 | Tubes、Panels、Services |
+| 第 8 周 | surface treatment for lighting hardware / lighting parts quality control | factory audit checklist for lighting parts | 用工艺与 QC 词收口，增强成交信任 | 首页、QC 相关页、Contact |
+
+建议直接跑的 Excel 文件名可以用：`seo_phase2_workflow_pack.xlsx`
+
+这个文件里建议至少有两张表：
+
+1. `keywords`：给工作流直接读取，至少包含 `keywords`、`category`
+2. `plan`：给你人工查看，包含 `week`、`lane`、`keyword`、`category`、`title_angle`、`internal_link_targets`
+
+执行时建议保持以下规则：
+
+1. 每篇文章只围绕 1 个主关键词，不要在一篇里塞太多相近词。
+2. 技术文写“是什么、怎么做、为什么重要”，决策文写“怎么选、怎么比、怎么避坑”。
+3. 每篇至少回链 2 个页面，优先首页、分类页、服务页、RFQ 页。
+4. 如果某篇文章有明显询盘信号，下一篇就围绕同专题补 FAQ、对比或案例，而不是立刻换主题。
+5. 支柱词优先做成专题簇，普通词保持 1 个关键词 -> 1 个标题 -> 1 篇文章的稳健模式。
+
+### 13.6.1 lane 怎么跑
+
+当前工作流本身只读取 `keywords` 和 `category`，所以 `lane` 只是你做运营分层的标记，不会自动改变代码行为。实际跑法建议如下：
+
+1. `ordinary` lane：直接放进主工作流，走默认 1:1 稳健模式
+2. `pillar` lane：单独放到一个小文件里跑，优先用来做专题簇和转化页回链
+3. 如果你要先出普通词，再出 pillar 词，就先跑 `ordinary` 文件，再跑 `pillar` 文件
+
+### 13.6.2 pillar 如何按不同方向输出
+
+当前版本里，Excel 读取器会按关键词去重，所以同一个 `keywords` 值重复出现时，只会保留一条。也就是说，**不改代码的情况下，不能靠重复同一个 pillar 关键词来做多方向输出**。
+
+可落地的做法有两种：
+
+1. 方向拆成不同种子词
+   - 例如把 `lighting hardware manufacturer` 拆成 `lighting hardware manufacturer`、`lighting hardware sourcing guide`、`lighting hardware supplier comparison`、`OEM vs ODM lighting hardware`
+   - 每个种子词对应一个方向，分别跑出不同文章
+2. 方向由标题模板决定
+   - 同一个主题簇里，分别用 `What Is`、`How to Choose`、`Comparison`、`Checklist` 这几类标题角度去跑
+   - 这样即使主题接近，内容意图也会明显不同
+
+如果你后面想让“同一个 pillar 关键词”稳定输出多个方向，建议再加一个 `pillar_direction` 列，并让标题生成 prompt 读取这个列作为约束；那就需要改代码，不只是改 Excel。
+
+### 13.7 标题和内容模板
+
+建议你在当前工作流里把模板理解成“自动标题生成的提示框架”，不是人工写标题：
+
+- 产品/技术词：What Is {keyword} / How {keyword} Works / {keyword} Explained
+- 供应商/决策词：How to Choose {keyword} Supplier / {keyword} Comparison / {keyword} Checklist
+- OEM/ODM 词：OEM vs ODM {keyword} / {keyword} for Custom Projects
+- 质量与工艺词：{keyword} Quality Control / {keyword} Material Selection / {keyword} Surface Treatment
+
+工作流实际执行时，标题仍然是 AI 自动生成；这些模板的作用是告诉模型每类关键词应该朝什么标题结构走，这样你在 Excel 里继续扩词也不会把内容风格打乱。
+
+## 14. 注意事项
+
+- 当前 WordPress 配置文件里仍有明文账号默认值，后续建议迁移到 `.env`
 - `TIMEZONE = "UTC"` 是代码内部计算时间所用时区，WordPress 后台显示时间还会受站点时区影响
 - 如果 WordPress 原生计划发布正常，就不再需要 GitHub Actions 去自动发布草稿
