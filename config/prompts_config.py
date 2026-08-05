@@ -125,7 +125,7 @@ Use a practical B2B structure:
 1. Introduction: frame the buyer or engineering problem clearly.
 2. Why this issue matters in production.
 3. Common defects, failure points, or hidden risks.
-4. What to compare, inspect, measure, or confirm (use a table when listing multiple checkpoints alongside inspection criteria).
+4. What to compare, inspect, measure, or confirm (use a table when listing multiple checkpoints alongside inspection criteria). At least one section heading should be a question format — this improves Featured Snippet eligibility.
 5. Practical checklist or verification framework.
 6. When to involve the factory early.
 7. Conclusion with a soft commercial CTA.
@@ -151,11 +151,15 @@ Write CTA language only. The publishing system will insert the actual internal l
 
 # Output format rules
 1. Output HTML only.
-2. Use the provided title as the article H1.
-3. Use H2 tags for major sections with inline style font-size: 24px and line-height: 2.
+2. Immediately after the H1, include a Key Takeaways summary box. This lets scanning readers grasp the article's value in seconds and improves dwell time:
+   <p style="font-size:16px; line-height:2; background:#f8f8f8; padding:16px; border-left:3px solid #e36d2d;">
+   <strong>Key Takeaways:</strong> 2-3 concise sentences summarizing the article's core conclusions and actionable insights.
+   </p>
+3. Use H2 tags for major sections with inline style font-size: 24px and line-height: 2. At least one H2 must be a question (e.g., "How to...", "What should buyers...", "When to...") — question-format headings are more likely to be picked up as Google Featured Snippets.
 4. Use p tags for paragraphs with inline style font-size: 16px and line-height: 2.
 5. Use ul/li where helpful, also with line-height: 2 and font-size: 16px.
 6. Use HTML tables with inline styles when presenting comparison data (e.g., material specs, process trade-offs, supplier evaluation criteria, pros/cons). Keep styles consistent:
+   - Wrap every table in a <div style="overflow-x:auto;"> so tables scroll horizontally on mobile screens.
    - <table style="width:100%; border-collapse:collapse; margin:20px 0; font-size:16px; line-height:2;">
    - <thead> wraps header rows; <th style="padding:12px 16px; text-align:left; border:1px solid #ddd; font-weight:bold; background-color:#f5f5f5; border-bottom:2px solid #e36d2d;">
    - <tbody> wraps body rows; <td style="padding:12px 16px; border:1px solid #ddd;">
@@ -164,7 +168,12 @@ Write CTA language only. The publishing system will insert the actual internal l
    - Set narrow columns (short labels, numbers) to width:15%-20% on the <th>. Content-heavy columns get width:30%-40%.
    - Reserve tables for 2+ column data; continue using ul/li for simple single-axis lists.
 7. Bold all headings.
-8. The final response must be valid JSON in this exact shape:
+8. Include JSON-LD structured data (Schema.org) at the end of the article content to improve search result rich snippets. Use <script type="application/ld+json"> tags:
+   - Always include an Article schema with @type, headline, description, datePublished, author (organization: "Yusheng Co.").
+   - If the article has explicit Q&A pairs, add a FAQPage schema with Question/Answer items.
+   - If the article has numbered step-by-step instructions, add a HowTo schema with HowToStep items.
+   - Place all <script> tags at the very end of the HTML content.
+9. The final response must be valid JSON in this exact shape:
 {{
   "title": "{title}",
   "keyword": "{keyword}",
@@ -173,7 +182,7 @@ Write CTA language only. The publishing system will insert the actual internal l
   "excerpt": "specific 80-120 character search-friendly summary"
 }}
 """,
-    "version": "2.1",
+    "version": "2.3",
     "description": "Technical B2B SEO content for process, quality, materials, and manufacturing topics.",
     "parameters": {
         "temperature": 0.75,
@@ -230,7 +239,7 @@ Use a practical B2B structure:
 1. Introduction: define the buyer challenge or sourcing context.
 2. Why this decision matters commercially and operationally.
 3. Common mistakes or weak comparison habits.
-4. What to compare between suppliers or factory options (present side-by-side supplier/factory comparison data in a table).
+4. What to compare between suppliers or factory options (present side-by-side supplier/factory comparison data in a table). At least one section heading should be a question format — this improves Featured Snippet eligibility.
 5. Practical evaluation checklist or buyer framework.
 6. How to reduce sourcing risk before order confirmation.
 7. Conclusion with a soft commercial CTA.
@@ -255,11 +264,15 @@ Write CTA language only. The publishing system will insert the actual internal l
 
 # Output format rules
 1. Output HTML only.
-2. Use the provided title as the article H1.
-3. Use H2 tags for major sections with inline style font-size: 24px and line-height: 2.
+2. Immediately after the H1, include a Key Takeaways summary box. This lets scanning readers grasp the article's value in seconds and improves dwell time:
+   <p style="font-size:16px; line-height:2; background:#f8f8f8; padding:16px; border-left:3px solid #e36d2d;">
+   <strong>Key Takeaways:</strong> 2-3 concise sentences summarizing the article's core conclusions and actionable insights.
+   </p>
+3. Use H2 tags for major sections with inline style font-size: 24px and line-height: 2. At least one H2 must be a question (e.g., "How to...", "What should buyers...", "When to...") — question-format headings are more likely to be picked up as Google Featured Snippets.
 4. Use p tags for paragraphs with inline style font-size: 16px and line-height: 2.
 5. Use ul/li where helpful, also with line-height: 2 and font-size: 16px.
 6. Use HTML tables with inline styles when presenting comparison data (e.g., supplier evaluation criteria, factory capability comparisons, sourcing approach trade-offs, pros/cons). Keep styles consistent:
+   - Wrap every table in a <div style="overflow-x:auto;"> so tables scroll horizontally on mobile screens.
    - <table style="width:100%; border-collapse:collapse; margin:20px 0; font-size:16px; line-height:2;">
    - <thead> wraps header rows; <th style="padding:12px 16px; text-align:left; border:1px solid #ddd; font-weight:bold; background-color:#f5f5f5; border-bottom:2px solid #e36d2d;">
    - <tbody> wraps body rows; <td style="padding:12px 16px; border:1px solid #ddd;">
@@ -268,7 +281,12 @@ Write CTA language only. The publishing system will insert the actual internal l
    - Set narrow columns (short labels, numbers) to width:15%-20% on the <th>. Content-heavy columns get width:30%-40%.
    - Reserve tables for 2+ column data; continue using ul/li for simple single-axis lists.
 7. Bold all headings.
-8. The final response must be valid JSON in this exact shape:
+8. Include JSON-LD structured data (Schema.org) at the end of the article content to improve search result rich snippets. Use <script type="application/ld+json"> tags:
+   - Always include an Article schema with @type, headline, description, datePublished, author (organization: "Yusheng Co.").
+   - If the article has explicit Q&A pairs, add a FAQPage schema with Question/Answer items.
+   - If the article has numbered step-by-step instructions, add a HowTo schema with HowToStep items.
+   - Place all <script> tags at the very end of the HTML content.
+9. The final response must be valid JSON in this exact shape:
 {{
   "title": "{title}",
   "keyword": "{keyword}",
@@ -277,7 +295,7 @@ Write CTA language only. The publishing system will insert the actual internal l
   "excerpt": "specific 80-120 character search-friendly summary"
 }}
 """,
-    "version": "2.1",
+    "version": "2.3",
     "description": "Decision-oriented B2B SEO content for sourcing, supplier evaluation, and market decision topics.",
     "parameters": {
         "temperature": 0.75,
@@ -310,10 +328,16 @@ PROMPT_VERSIONS = {
     "content_technical_guides": {
         "1.0": CONTENT_PROMPT_TECHNICAL_GUIDES,
         "2.0": CONTENT_PROMPT_TECHNICAL_GUIDES,
+        "2.1": CONTENT_PROMPT_TECHNICAL_GUIDES,
+        "2.2": CONTENT_PROMPT_TECHNICAL_GUIDES,
+        "2.3": CONTENT_PROMPT_TECHNICAL_GUIDES,
     },
     "content_industry_insights": {
         "1.0": CONTENT_PROMPT_INDUSTRY_INSIGHTS,
         "2.0": CONTENT_PROMPT_INDUSTRY_INSIGHTS,
+        "2.1": CONTENT_PROMPT_INDUSTRY_INSIGHTS,
+        "2.2": CONTENT_PROMPT_INDUSTRY_INSIGHTS,
+        "2.3": CONTENT_PROMPT_INDUSTRY_INSIGHTS,
     },
 }
 
@@ -321,5 +345,5 @@ PROMPT_VERSIONS = {
 CURRENT_VERSIONS = {
     "keyword_filter": "2.0",
     "title_generator": "2.0",
-    "content_generator": "2.0",
+    "content_generator": "2.3",
 }

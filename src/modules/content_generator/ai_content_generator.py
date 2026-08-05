@@ -314,10 +314,15 @@ class AIContentGenerator(AINode):
     ) -> List[AIMessage]:
         prompt_tpl = self._get_prompt_for_category(category)
         cta_destination = self._get_cta_destination(lane, internal_link_targets)
+        # pillar articles need more depth (2000+ words); ordinary keep 1500
+        if lane.lower() == "pillar":
+            word_count = max(self.target_word_count, 2000)
+        else:
+            word_count = self.target_word_count
         user_prompt = prompt_tpl.get("user", "").format(
             keyword=keyword,
             title=title,
-            word_count=self.target_word_count,
+            word_count=word_count,
             industry=self.industry,
             language=self.language,
             direction=direction,
