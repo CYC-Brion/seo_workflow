@@ -56,7 +56,21 @@ def get_default_internal_link_rules() -> List[Dict[str, Any]]:
         {
             "url": "https://yushengco.com/services/",
             "target_names": ["Services"],
-            "phrases": ["OEM customization", "ODM solutions", "custom manufacturing services", "custom manufacturing", "design support", "prototyping", "QC service", "supply chain support", "after-sales service", "deep cooperation", "project consultation", "solution", "OEM", "ODM"],
+            # "services" / "our services" 必须显式列出：文章结语最常写的就是
+            # "review our Services"，只给 service 的派生词会让句子里唯一该出链的
+            # 位置反而没有链。单数 "service" 故意不加 —— 技术文里
+            # "service life" / "service temperature" 是灯具参数，不该跳到服务页。
+            "phrases": ["our services", "manufacturing services", "custom manufacturing services", "custom manufacturing service", "one-stop service", "services", "OEM customization", "ODM solutions", "custom manufacturing", "design support", "prototyping", "QC service", "supply chain support", "after-sales service", "deep cooperation", "project consultation", "solution", "OEM", "ODM"],
+        },
+        {
+            "url": "https://yushengco.com/contact-us/",
+            "target_names": ["Contact"],
+            # 之前 get_internal_link_target_map() 里有 Contact -> /contact-us/，
+            # 但规则表里没有对应条目，resolve_internal_link_targets() 取到的
+            # phrases 是空列表，_replace_first_internal_link() 直接提前返回 ——
+            # 工作簿里写了 Contact 也永远不出链。显式补上规则。
+            # 同样避开裸词 "contact"：五金语境里 "contact" 可能是电接触点。
+            "phrases": ["contact us", "contact our team", "get in touch", "reach out to us", "request a quote", "request a quotation", "get a quote", "send us your drawings", "send your inquiry", "submit your requirements", "RFQ"],
         },
         {
             "url": "https://yushengco.com/about-us/",
@@ -66,7 +80,11 @@ def get_default_internal_link_rules() -> List[Dict[str, Any]]:
         {
             "url": "https://yushengco.com/",
             "target_names": ["Home"],
-            "phrases": ["Yusheng hardware manufacturer", "Zhongshan Yusheng", "our factory", "lighting hardware manufacturer", "hardware craft company", "custom lighting hardware", "manufacturer", "supplier", "home"],
+            # 裸词 "manufacturer" / "supplier" / "home" 已移除：它们是最先被扫到的
+            # 通用词，会抢走本该指向 /services/、/about-us/、产品页的锚文本。
+            # 实测一篇讲工厂能力的文章里，"supplier" 被 Home 吃掉，而
+            # "review our Services" 一个字都没链出去。首页只留品牌相关的具体说法。
+            "phrases": ["Yusheng hardware manufacturer", "Zhongshan Yusheng", "our factory", "lighting hardware manufacturer", "hardware craft company", "custom lighting hardware"],
         },
     ]
 
@@ -126,10 +144,16 @@ def resolve_internal_link_targets(targets: str) -> List[Dict[str, Any]]:
             continue
         seen_urls.add(url)
         base_rule = rule_by_url.get(url, {})
+        phrases = [str(p).strip() for p in base_rule.get("phrases", []) if str(p).strip()]
+        if not phrases:
+            # 工作簿里明确声明了目标，却没有对应短语表时，至少用目标名本身当短语。
+            # 否则 _replace_first_internal_link() 会因为 phrases 为空而静默返回，
+            # 用户看到的是「我明明填了 Contact 但文章里没有 Contact 链接」。
+            phrases = [target_name]
         resolved.append({
             "name": target_name,
             "url": url,
-            "phrases": list(base_rule.get("phrases", [])),
+            "phrases": phrases,
         })
 
     return resolved

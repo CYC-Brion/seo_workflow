@@ -702,10 +702,26 @@ class AIContentGenerator(AINode):
             "review about us",
             "use contact",
         )
+        # 结语不会照抄模板句式。实测一篇文章写的是
+        # "Before placing an order, review our Services ..."，一个 cta_marker 都不匹配
+        # （"review services" 不是 "review our services" 的子串），于是末尾这段
+        # 完全不参与链接。所以再补一条判定：末尾段落只要正面提到工作簿指定的目标名
+        # 本身就按 CTA 处理，_link_named_targets_in_fragment 会把它变成链。
+        cta_target_patterns = [
+            re.compile(rf"(?<!\w){re.escape(name)}(?!\w)", re.I)
+            for name in cta_target_names
+        ]
 
         for match in reversed(paragraphs[-3:]):
             paragraph_html = match.group(0)
-            if not any(marker in paragraph_html.lower() for marker in cta_markers):
+            is_cta_paragraph = any(
+                marker in paragraph_html.lower() for marker in cta_markers
+            )
+            if not is_cta_paragraph:
+                is_cta_paragraph = any(
+                    pattern.search(paragraph_html) for pattern in cta_target_patterns
+                )
+            if not is_cta_paragraph:
                 continue
             linked_paragraph = self._link_named_targets_in_fragment(
                 paragraph_html, cta_target_names

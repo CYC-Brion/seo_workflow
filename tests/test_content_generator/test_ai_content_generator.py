@@ -145,6 +145,94 @@ class TestAIContentGenerator:
         assert 'href="https://yushengco.com/services/"' in linked
         assert 'href="https://yushengco.com/product-category/machined-parts/"' in linked
 
+    def test_every_declared_target_has_matchable_phrases(self):
+        """每个工作簿能写的目标名，都必须解析出非空短语表。
+
+        回归背景：Contact 在 target_map 里有 URL，但规则表里没有对应条目。
+        resolve_internal_link_targets() 拿到空 phrases，
+        _replace_first_internal_link() 见空列表直接返回，于是「工作簿里填了 Contact、
+        文章里一个 Contact 链接都没有」，而且不报错、不告警。
+        """
+        from config.internal_links_config import (
+            get_internal_link_target_map,
+            resolve_internal_link_targets,
+        )
+
+        for normalized_name in get_internal_link_target_map():
+            rules = resolve_internal_link_targets(normalized_name)
+            assert rules, f"{normalized_name} 无法解析出规则"
+            assert rules[0]["phrases"], f"{normalized_name} 解析出的短语表为空"
+
+    def test_apply_internal_links_links_the_literal_service_word(self):
+        """结语常写 "review our Services"，短语表里必须有 services 本身。"""
+        generator = AIContentGenerator("test-content-gen")
+        content = (
+            "<article><p>Before placing an order, review our Services against your "
+            "required processes.</p></article>"
+        )
+
+        linked = generator._apply_internal_links(
+            content, internal_link_targets="Home; About Us; Services; Contact"
+        )
+
+        assert 'href="https://yushengco.com/services/"' in linked
+
+    def test_apply_internal_links_makes_contact_reachable(self):
+        generator = AIContentGenerator("test-content-gen")
+        content = "<article><p>Contact us before finalizing drawings.</p></article>"
+
+        linked = generator._apply_internal_links(
+            content, internal_link_targets="Home; About Us; Services; Contact"
+        )
+
+        assert 'href="https://yushengco.com/contact-us/"' in linked
+
+    def test_home_rule_does_not_steal_generic_anchors(self):
+        """裸词 supplier / manufacturer 不该被首页规则吃掉。"""
+        generator = AIContentGenerator("test-content-gen")
+        content = (
+            "<article><p>Comparing suppliers and manufacturers is the first step "
+            "in a sourcing program.</p></article>"
+        )
+
+        linked = generator._apply_internal_links(
+            content, internal_link_targets="Home; Services"
+        )
+
+        assert "suppliers</a>" not in linked
+        assert "manufacturers</a>" not in linked
+
+    def test_service_life_is_not_linked_to_the_services_page(self):
+        """service life / service temperature 是技术参数，不是服务介绍。"""
+        generator = AIContentGenerator("test-content-gen")
+        content = (
+            "<article><p>The gasket is rated for a 50,000 hour service life at "
+            "rated service temperature.</p></article>"
+        )
+
+        linked = generator._apply_internal_links(
+            content, internal_link_targets="Home; Services"
+        )
+
+        assert "service life</a>" not in linked
+        assert "service temperature</a>" not in linked
+
+    def test_link_cta_targets_handles_a_natural_sentence(self):
+        """结语不照抄模板句式时也要能挂上 CTA 目标链接。"""
+        generator = AIContentGenerator("test-content-gen")
+        content = (
+            "<article><p>Body paragraph.</p>"
+            "<p>Before placing an order, review our Services against your required "
+            "processes.</p></article>"
+        )
+
+        result = generator._link_cta_targets(
+            content, lane="pillar", internal_link_targets="Home; Services; Contact"
+        )
+
+        assert 'href="https://yushengco.com/services/"' in result
+        assert ">Services</a>" in result
+
     @patch("src.modules.content_generator.ai_content_generator.get_ai_client")
     def test_generate_content_for_input(self, mock_get_ai_client):
         mock_client = Mock()
