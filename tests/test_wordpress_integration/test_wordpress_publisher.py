@@ -99,11 +99,61 @@ class TestWordPressPublisher:
 
         wp_post = self.publisher.wp_client.create_post.call_args.args[0]
         assert result.metadata["featured_media"] == 502
-        assert result.metadata["editorial_media"] == [{"id": 501, "file": "factory/qc.webp"}]
+        assert result.metadata["editorial_media"] == [
+            {"id": 501, "file": "factory/qc.webp", "reused": False}
+        ]
+        assert result.metadata["editorial_media_reused"] == 0
         assert wp_post.featured_media == 502
         assert marker not in wp_post.content
         assert 'loading="lazy"' in wp_post.content
         assert 'width="900" height="700"' in wp_post.content
+
+    def test_references_existing_wp_media_without_uploading(self):
+        """图库已关联 WP 条目的图，发布时必须只写 URL，一次上传都不发。
+
+        这是「不再产生重复副本」的核心保证：媒体库里 factory-10.webp、
+        白底图.jpg 各有 2 个同名条目，都是过去无条件重传留下的。
+        """
+        self.publisher.enable_media_upload = True
+        self.publisher.wp_client = Mock()
+        self.publisher.wp_client.create_post.return_value = {
+            "id": 200, "link": "https://example.com/post", "date": "2026-01-01"
+        }
+        marker = "<!-- editorial-image:factory/qc.webp -->"
+        inline_url = "https://yushengco.com/wp-content/uploads/2026/08/factory-qc.webp"
+        featured_url = "https://yushengco.com/wp-content/uploads/2026/08/factory-08.webp"
+
+        post = WordPressPublishInput(
+            title="Factory Capability Guide",
+            content=f"<article><h2>Quality Control</h2>{marker}</article>",
+            featured_media_id=15621,
+            editorial_images=[
+                {
+                    "file": "factory/qc.webp",
+                    "marker": marker,
+                    "media_id": 777,
+                    "source_url": inline_url,
+                    "alt_text": "Factory quality inspection",
+                    "width": 900,
+                    "height": 700,
+                }
+            ],
+        )
+
+        result = self.publisher._process_single_post(post)
+
+        self.publisher.wp_client.upload_media.assert_not_called()
+        assert self.publisher.stats["media_uploads"] == 0
+        assert self.publisher.stats["media_reused"] == 2  # 特色图 + 正文图各一次
+
+        wp_post = self.publisher.wp_client.create_post.call_args.args[0]
+        assert wp_post.featured_media == 15621
+        assert inline_url in wp_post.content
+        assert marker not in wp_post.content
+        assert result.metadata["editorial_media"] == [
+            {"id": 777, "file": "factory/qc.webp", "reused": True}
+        ]
+        assert result.metadata["editorial_media_reused"] == 1
 
     def test_wordpress_publish_result_creation(self):
         """测试WordPressPublishResult创建"""

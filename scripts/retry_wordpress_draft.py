@@ -26,13 +26,24 @@ def main() -> int:
 
     content = args.article.read_text(encoding="utf-8")
     library = EditorialImageLibrary(ROOT / "pic" / "editorial_library")
+    asset_by_file = {str(asset.get("file", "")): asset for asset in library.assets}
+
     editorial_images = []
     for relative_path in re.findall(r"<!-- editorial-image:([^\s]+) -->", content):
-        editorial_images.append({
-            "file": relative_path,
-            "path": str(library.library_dir / relative_path),
-            "marker": library.marker_for(relative_path),
-        })
+        # 从 catalog 补 alt/宽高 —— 以前这条路径不带这些字段，
+        # build_inline_image_html 会输出 width="0" height="0"。
+        asset = dict(asset_by_file.get(relative_path, {}))
+        asset["file"] = relative_path
+        asset["marker"] = library.marker_for(relative_path)
+
+        reference = library.wordpress_reference(asset_by_file.get(relative_path, {}))
+        if reference:
+            asset["media_id"] = reference["id"]
+            asset["source_url"] = reference["source_url"]
+        else:
+            asset["path"] = str(library.library_dir / relative_path)
+            print(f"warn: {relative_path} 没有 WP 引用，将尝试上传本地文件")
+        editorial_images.append(asset)
 
     publisher = WordPressPublisher("wordpress_retry_publisher", config={
         "batch_size": 1,

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.utils import get_logger
+
 
 IMAGE_MARKER_PREFIX = "<!-- editorial-image:"
 
@@ -52,10 +54,31 @@ class EditorialImageLibrary:
             Path(__file__).resolve().parents[3] / "pic" / "editorial_library"
         )
         self.catalog_path = self.library_dir / "editorial_assets.json"
+        self.logger = get_logger("editorial_image_library")
         self.assets = self._load_assets()
+        self.unlinked_assets = [
+            asset for asset in self.assets if not self._has_wordpress_reference(asset)
+        ]
+        if self.assets:
+            # 「静默不合格」是这套流程以前最难查的问题：换台机器 clone 下来，
+            # pic/ 不在，图片全被悄悄滤掉，文章照发、一张图都没有。
+            # 所以把计数明确打出来。
+            self.logger.info(
+                f"editorial image library: {len(self.assets) - len(self.unlinked_assets)}"
+                f"/{len(self.assets)} assets linked to WordPress media; "
+                f"{len(self.unlinked_assets)} assets are not selectable (no WP reference)"
+            )
+
+    @property
+    def unlinked_asset_count(self) -> int:
+        """没有 WP 引用、因而永远选不中的资产数。"""
+        return len(self.unlinked_assets)
 
     def _load_assets(self) -> List[Dict[str, Any]]:
         if not self.catalog_path.exists():
+            self.logger.warning(
+                f"图片库 catalog 不存在：{self.catalog_path} —— 本次不会配任何图片"
+            )
             return []
         data = json.loads(self.catalog_path.read_text(encoding="utf-8"))
         return [asset for asset in data.get("assets", []) if isinstance(asset, dict)]
@@ -180,17 +203,52 @@ class EditorialImageLibrary:
         digest = hashlib.sha256(selection_seed.encode("utf-8")).hexdigest()
         return ordered[int(digest, 16) % len(ordered)]
 
+    @staticmethod
+    def _has_wordpress_reference(asset: Dict[str, Any]) -> bool:
+        """资产是否已关联到 WP 媒体库条目。
+
+        选择门槛以前看的是本地文件是否存在（``path.is_file()``），但 pic/ 不入库，
+        换台机器本地文件全都不在，选择会静默退化成一篇文章配不出图。
+        现在只看 catalog 里的引用，与本地磁盘完全无关。
+        """
+        reference = asset.get("wordpress_media") or {}
+        return reference.get("id") is not None and bool(reference.get("source_url"))
+
+    @staticmethod
+    def wordpress_reference(asset: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """返回资产的 WP 媒体引用；没有有效引用时返回 None。"""
+        reference = asset.get("wordpress_media") or {}
+        if reference.get("id") is None or not reference.get("source_url"):
+            return None
+        return reference
+
+    @staticmethod
+    def _reference_bytes(asset: Dict[str, Any]) -> int:
+        """引用图片的体积，用来卡字节门槛。
+
+        WP 条目给了 filesize 就用它。退回到 catalog 里描述的本地 WebP 体积时
+        是**低估** —— 实际引用的是 jpg/png 原图，通常比优化后的 WebP 大。
+        """
+        reference = asset.get("wordpress_media") or {}
+        filesize = reference.get("filesize_bytes")
+        if filesize:
+            return int(filesize)
+        try:
+            return int(float(asset.get("size_kb", 0) or 0) * 1024)
+        except (TypeError, ValueError):
+            return 0
+
     def _is_file_eligible(
         self, asset: Dict[str, Any], min_dimension: int, max_bytes: int
     ) -> bool:
+        if not self._has_wordpress_reference(asset):
+            return False
         width = int(asset.get("width", 0) or 0)
         height = int(asset.get("height", 0) or 0)
-        path = self.library_dir / str(asset.get("file", ""))
         return (
             width >= min_dimension
             and height >= min_dimension
-            and path.is_file()
-            and path.stat().st_size <= max_bytes
+            and self._reference_bytes(asset) <= max_bytes
         )
 
 

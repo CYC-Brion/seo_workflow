@@ -191,11 +191,17 @@ def main() -> int:
             image_plan = library.plan_article_images(item, title, content)
             inline_images = []
             for image in image_plan.inline_images:
-                with_path = image.copy()
-                with_path["path"] = str(library.library_dir / image["file"])
-                with_path["marker"] = library.marker_for(image["file"])
-                inline_images.append(with_path)
+                entry = image.copy()
+                entry["marker"] = library.marker_for(image["file"])
+                reference = library.wordpress_reference(image)
+                if reference:
+                    entry["media_id"] = reference["id"]
+                    entry["source_url"] = reference["source_url"]
+                else:
+                    entry["path"] = str(library.library_dir / image["file"])
+                inline_images.append(entry)
 
+            featured_reference = library.wordpress_reference(image_plan.featured_image or {})
             publish_result = publisher.execute([{
                 "title": title,
                 "content": image_plan.content,
@@ -203,7 +209,11 @@ def main() -> int:
                 "categories": [item["category"]],
                 "publish_status": "future",
                 "schedule_date": slot.isoformat(),
-                "featured_image_path": str(library.library_dir / image_plan.featured_image["file"]) if image_plan.featured_image else None,
+                "featured_media_id": featured_reference["id"] if featured_reference else None,
+                "featured_image_path": (
+                    str(library.library_dir / image_plan.featured_image["file"])
+                    if image_plan.featured_image and not featured_reference else None
+                ),
                 "editorial_images": inline_images,
             }])
             if publish_result.status.value != "completed":

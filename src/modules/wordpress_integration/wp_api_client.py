@@ -209,6 +209,21 @@ class WordPressClient:
         """获取标签列表（子类必须实现）"""
         raise NotImplementedError
 
+    def list_media(self, **kwargs) -> List[Dict[str, Any]]:
+        """列出媒体库条目（子类必须实现）
+
+        XML-RPC 没有等价的读取接口，只有 REST 客户端能实现。
+        """
+        raise NotImplementedError
+
+    def get_media(self, media_id: int) -> Dict[str, Any]:
+        """按 ID 获取单个媒体条目（子类必须实现）"""
+        raise NotImplementedError
+
+    def count_media(self) -> int:
+        """媒体库条目总数（子类必须实现）"""
+        raise NotImplementedError
+
     def _handle_api_error(self, response: requests.Response) -> None:
         """处理API错误"""
         if response.status_code == 401:
@@ -351,6 +366,84 @@ class WordPressRESTClient(WordPressClient):
         except RequestException as e:
             self.logger.error(f"获取文章列表失败: {e}")
             raise WordPressAPIError(f"获取文章列表失败: {e}")
+
+    def list_media(
+        self, per_page: int = 100, max_items: int = 0
+    ) -> List[Dict[str, Any]]:
+        """分页拉取媒体库里的图片条目。
+
+        纯只读：只发 GET，不产生任何副作用。只取图片（media_type=image），
+        因为工作流只会引用图片；SVG 也算 image，视频会被排除。
+        """
+        url = f"{self.rest_api_url}/media"
+        collected: List[Dict[str, Any]] = []
+        page = 1
+        total_pages = 1
+
+        while page <= total_pages:
+            params = {
+                "per_page": per_page,
+                "page": page,
+                "context": "edit",
+                "media_type": "image",
+                "orderby": "id",
+                "order": "asc",
+            }
+            response = self.session.get(url, params=params, timeout=self.timeout)
+
+            # WP 在页码越界时返回 400 rest_post_invalid_page_number。
+            # 分页过程中条目被删就会撞上，不该当成错误。
+            if response.status_code == 400 and page > 1:
+                self.logger.debug(f"媒体分页提前结束于第 {page} 页")
+                break
+            if response.status_code != 200:
+                self._handle_api_error(response)
+
+            batch = response.json()
+            if not batch:
+                break
+
+            collected.extend(batch)
+            total_pages = int(response.headers.get("X-WP-TotalPages", "1") or 1)
+
+            if max_items and len(collected) >= max_items:
+                break
+            page += 1
+
+        self.logger.info(
+            f"媒体库读取完成 | {{'items': {len(collected)}, 'pages': {page - 1}}}"
+        )
+        return collected
+
+    def get_media(self, media_id: int) -> Dict[str, Any]:
+        """按 ID 获取单个媒体条目。用来复查 catalog 里记的 ID 是否还有效。"""
+        url = f"{self.rest_api_url}/media/{int(media_id)}"
+        try:
+            response = self.session.get(
+                url, params={"context": "edit"}, timeout=self.timeout
+            )
+            if response.status_code != 200:
+                self._handle_api_error(response)
+            return response.json()
+        except RequestException as e:
+            self.logger.error(f"获取媒体条目失败: {e}")
+            raise WordPressAPIError(f"获取媒体条目失败: {e}")
+
+    def count_media(self) -> int:
+        """媒体库条目总数，只读 X-WP-Total 头。"""
+        url = f"{self.rest_api_url}/media"
+        try:
+            response = self.session.get(
+                url,
+                params={"per_page": 1, "context": "edit", "media_type": "image"},
+                timeout=self.timeout,
+            )
+            if response.status_code != 200:
+                self._handle_api_error(response)
+            return int(response.headers.get("X-WP-Total", "0") or 0)
+        except RequestException as e:
+            self.logger.error(f"读取媒体总数失败: {e}")
+            raise WordPressAPIError(f"读取媒体总数失败: {e}")
 
     def update_post(self, post_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         """更新文章"""

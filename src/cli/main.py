@@ -1227,10 +1227,26 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
             inline_images = []
             if image_plan:
                 for image in image_plan.inline_images:
-                    image_with_path = image.copy()
-                    image_with_path["path"] = str(image_library.library_dir / image["file"])
-                    image_with_path["marker"] = image_library.marker_for(image["file"])
-                    inline_images.append(image_with_path)
+                    image_with_marker = image.copy()
+                    image_with_marker["marker"] = image_library.marker_for(image["file"])
+                    # 引用 WP 媒体库已有条目。没有引用才回填本地路径走上传兜底
+                    # —— 但图库已经只选出有引用的资产，所以这条兜底实际是死路，
+                    # 这正是目的：不再产生重复副本。
+                    reference = image_library.wordpress_reference(image)
+                    if reference:
+                        image_with_marker["media_id"] = reference["id"]
+                        image_with_marker["source_url"] = reference["source_url"]
+                    else:
+                        image_with_marker["path"] = str(
+                            image_library.library_dir / image["file"]
+                        )
+                    inline_images.append(image_with_marker)
+
+            featured_reference = image_library.wordpress_reference(featured_image or {})
+            featured_image_path = None
+            if featured_image and not featured_reference:
+                featured_image_path = str(image_library.library_dir / featured_image["file"])
+
             wp_inputs.append({
                 "title": title,
                 "content": content,
@@ -1240,10 +1256,10 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                 "categories": [cat_name],
                 "publish_status": publish_status,
                 "schedule_date": post_schedule_date,
-                "featured_image_path": (
-                    str(image_library.library_dir / featured_image["file"])
-                    if featured_image else None
+                "featured_media_id": (
+                    featured_reference["id"] if featured_reference else None
                 ),
+                "featured_image_path": featured_image_path,
                 "editorial_images": inline_images,
             })
 

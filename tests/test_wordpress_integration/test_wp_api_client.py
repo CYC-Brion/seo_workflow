@@ -64,15 +64,17 @@ class TestWordPressClient:
     @patch('src.modules.wordpress_integration.wp_api_client.config_manager')
     def test_get_wordpress_client_with_config(self, mock_config_manager):
         """测试通过配置获取WordPress客户端"""
-        # 模拟配置
+        # 配置管理器暴露的是 wordpress_config 属性（lowercase 字段）。
+        # 以前这里 mock 的是 get_wordpress_config() 和大写字段，
+        # 但实现里根本没有那个方法 —— 断言一个永远不成立的调用。
         mock_wp_config = Mock()
-        mock_wp_config.WORDPRESS_URL = "https://test.com"
-        mock_wp_config.WORDPRESS_USERNAME = "admin"
-        mock_wp_config.WORDPRESS_APPLICATION_PASSWORD = "app_password"
-        mock_wp_config.WORDPRESS_PASSWORD = "password"
-        mock_wp_config.VERIFY_SSL = True
-        mock_wp_config.TIMEOUT = 30
-        mock_config_manager.get_wordpress_config.return_value = mock_wp_config
+        mock_wp_config.url = "https://test.com"
+        mock_wp_config.username = "admin"
+        mock_wp_config.application_password = "app_password"
+        mock_wp_config.password = "password"
+        mock_wp_config.verify_ssl = True
+        mock_wp_config.timeout = 30
+        mock_config_manager.wordpress_config = mock_wp_config
 
         # 模拟客户端创建
         with patch('src.modules.wordpress_integration.wp_api_client.WordPressRESTClient') as mock_client_class:
@@ -80,9 +82,6 @@ class TestWordPressClient:
             mock_client_class.return_value = mock_client
 
             client = get_wordpress_client(api_type="rest", use_config=True)
-
-            # 验证配置管理器被调用
-            mock_config_manager.get_wordpress_config.assert_called_once()
 
             # 验证客户端使用正确的参数创建
             mock_client_class.assert_called_once_with(
@@ -262,6 +261,82 @@ class TestWordPressRESTClient:
         assert category.name == "New Category"
         assert category.slug == "new-category"
         self.client.logger.info.assert_called()
+
+    # --- 媒体库读取（只读，供 linker 使用）---
+
+    def _media_response(self, items, total_pages=1, total=None):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = items
+        response.headers = {
+            "X-WP-Total": str(total if total is not None else len(items)),
+            "X-WP-TotalPages": str(total_pages),
+        }
+        return response
+
+    def test_list_media_paginates_until_the_last_page(self):
+        """分页必须靠 X-WP-TotalPages 走完，否则大库只拿到第一页。"""
+        self.client.session.get.side_effect = [
+            self._media_response([{"id": 1}, {"id": 2}], total_pages=2, total=3),
+            self._media_response([{"id": 3}], total_pages=2, total=3),
+        ]
+
+        items = self.client.list_media(per_page=2)
+
+        assert [item["id"] for item in items] == [1, 2, 3]
+        assert self.client.session.get.call_count == 2
+        # 只读：全程 GET，并且显式限定只取图片
+        assert self.client.session.get.call_args.kwargs["params"]["media_type"] == "image"
+
+    def test_list_media_stops_on_out_of_range_page(self):
+        """WP 在页码越界时返回 400 rest_post_invalid_page_number，不是错误。"""
+        overflow = Mock()
+        overflow.status_code = 400
+        overflow.json.return_value = {"code": "rest_post_invalid_page_number"}
+        self.client.session.get.side_effect = [
+            self._media_response([{"id": 1}], total_pages=99, total=1),
+            overflow,
+        ]
+
+        items = self.client.list_media(per_page=1)
+
+        assert [item["id"] for item in items] == [1]
+
+    def test_list_media_raises_on_a_real_api_error(self):
+        failure = Mock()
+        failure.status_code = 403
+        failure.json.return_value = {"code": "rest_forbidden", "message": "nope"}
+        self.client.session.get.return_value = failure
+
+        with pytest.raises(WordPressAPIError):
+            self.client.list_media()
+
+    def test_count_media_reads_the_total_header_without_downloading_items(self):
+        self.client.session.get.return_value = self._media_response([], total=1391)
+
+        assert self.client.count_media() == 1391
+        assert self.client.session.get.call_args.kwargs["params"]["per_page"] == 1
+
+    def test_get_media_by_id(self):
+        self.client.session.get.return_value = self._media_response(
+            {"id": 15621, "source_url": "https://test.com/factory-08.webp"}
+        )
+
+        media = self.client.get_media(15621)
+
+        assert media["id"] == 15621
+        assert self.client.session.get.call_args.args[0].endswith("/media/15621")
+
+    def test_base_client_media_methods_are_not_silently_unimplemented(self):
+        """XML-RPC 没有读媒体的接口，必须显式报错而不是返回空列表。"""
+        client = WordPressClient("https://test.com", "admin", "password")
+
+        with pytest.raises(NotImplementedError):
+            client.list_media()
+        with pytest.raises(NotImplementedError):
+            client.get_media(1)
+        with pytest.raises(NotImplementedError):
+            client.count_media()
 
 
 if __name__ == "__main__":

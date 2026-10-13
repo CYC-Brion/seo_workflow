@@ -47,7 +47,18 @@ logs/
 /data/
 /output/
 /outputs/
-/pic/
+# pic/ 是 565MB 素材树（含 pic/editorial_library/new 的 540MB 原片），不入库。
+# 但 editorial_assets.json 必须入库 —— 流水线靠它拿 WordPress 媒体库地址，
+# 不入库的话换台机器 clone 下来跑出来的文章一张图都没有，而且不报错。
+#
+# 注意 git 的规则：父目录被排除时，子文件无法被重新包含。所以这里排除的是
+# 「pic 下的内容」而不是「pic 目录本身」，否则下面两条 ! 会被无声忽略。
+# 两条 ! 必须保持在最后，上面也不能再有裸的 /pic/。
+/pic/*
+!/pic/editorial_library/
+/pic/editorial_library/*
+!/pic/editorial_library/editorial_assets.json
+!/pic/editorial_library/README.md
 /image/
 future_publish_test.xlsx
 

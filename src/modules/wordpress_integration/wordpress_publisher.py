@@ -54,6 +54,10 @@ class WordPressPublishInput:
     tags: List[str] = field(default_factory=list)  # 标签名称列表
     featured_image_url: Optional[str] = None
     featured_image_path: Optional[str] = None
+    # 已存在于 WordPress 媒体库的特色图 ID。直接映射到 REST 的 featured_media，
+    # 零请求、零新副本。特意不复用 featured_image_url —— 那个字段的契约是
+    # 「下载远程 URL 再重新上传」，正是要消灭的重复上传行为。
+    featured_media_id: Optional[int] = None
     editorial_images: List[Dict[str, Any]] = field(default_factory=list)
     publish_status: str = "draft"  # draft, publish, pending, private
     schedule_date: Optional[str] = None  # ISO格式: 2024-01-01T12:00:00
@@ -107,17 +111,7 @@ class WordPressPublisher(DataProcessingNode):
         self.tags_cache: Dict[str, int] = {}  # 标签名称 -> ID
 
         # 统计数据
-        self.stats = {
-            "total_posts": 0,
-            "posts_published": 0,
-            "posts_failed": 0,
-            "categories_created": 0,
-            "tags_created": 0,
-            "media_uploads": 0,
-            "batches_processed": 0,
-            "api_errors": 0,
-            "total_time": 0.0,
-        }
+        self.stats = self._empty_stats()
 
         self.logger.info(
             f"WordPress发布器初始化: {node_id}",
@@ -129,6 +123,26 @@ class WordPressPublisher(DataProcessingNode):
                 "auto_create_tags": self.auto_create_tags,
             }
         )
+
+    @staticmethod
+    def _empty_stats() -> Dict[str, Any]:
+        """统计计数器的唯一定义处。
+
+        __init__ 和 pre_execute 都要重置它，以前是两份逐字重复的字面量 ——
+        加一个字段只改一处，另一处就会在使用时 KeyError。
+        """
+        return {
+            "total_posts": 0,
+            "posts_published": 0,
+            "posts_failed": 0,
+            "categories_created": 0,
+            "tags_created": 0,
+            "media_uploads": 0,
+            "media_reused": 0,
+            "batches_processed": 0,
+            "api_errors": 0,
+            "total_time": 0.0,
+        }
 
     def _initialize_client(self) -> None:
         """初始化WordPress客户端"""
@@ -237,13 +251,23 @@ class WordPressPublisher(DataProcessingNode):
 
             content = post_input.content
             featured_media_id = None
-            uploaded_editorial_media: List[Dict[str, Any]] = []
+            resolved_editorial_media: List[Dict[str, Any]] = []
 
             if self.enable_media_upload:
-                content, uploaded_editorial_media = self._upload_editorial_images(
+                content, resolved_editorial_media = self._resolve_editorial_images(
                     content, post_input.editorial_images
                 )
-                featured_media_id = self._upload_featured_image(post_input)
+
+                # 引用优先：图库里已经关联到 WP 条目的直接拿来用。
+                # 没有引用才退回上传（enable_media_upload 现在是兜底开关）。
+                if post_input.featured_media_id:
+                    featured_media_id = post_input.featured_media_id
+                    self.stats["media_reused"] += 1
+                    self.logger.debug(
+                        f"复用 WP 已有特色图片: media_id={featured_media_id}"
+                    )
+                else:
+                    featured_media_id = self._upload_featured_image(post_input)
 
             # 创建文章数据
             wp_post_data = WordPressPostData(
@@ -322,7 +346,10 @@ class WordPressPublisher(DataProcessingNode):
                     "categories": category_ids,
                     "tags": tag_ids,
                     "featured_media": featured_media_id,
-                    "editorial_media": uploaded_editorial_media,
+                    "editorial_media": resolved_editorial_media,
+                    "editorial_media_reused": sum(
+                        1 for media in resolved_editorial_media if media.get("reused")
+                    ),
                 }
             )
 
@@ -370,26 +397,45 @@ class WordPressPublisher(DataProcessingNode):
         result = self._upload_local_image(image)
         return result.get("id") if result else None
 
-    def _upload_editorial_images(
+    def _resolve_editorial_images(
         self, content: str, editorial_images: List[Dict[str, Any]]
     ) -> tuple:
-        """Upload local body images and replace their safe HTML placeholders."""
-        uploaded: List[Dict[str, Any]] = []
+        """把正文里的图片占位标记换成 <img> 标签。
+
+        优先引用 WordPress 媒体库里**已有**的条目（`source_url` + `media_id`），
+        只有没有引用时才退回上传本地文件。以前是无条件上传，同一个文件会在
+        媒体库里堆出多份副本（实测 factory-10.webp、白底图.jpg 各有 2 个同名条目）。
+        """
+        resolved: List[Dict[str, Any]] = []
         for image in editorial_images or []:
             marker = str(image.get("marker", ""))
             if not marker or marker not in content:
                 continue
-            result = self._upload_local_image(image)
-            if not result:
-                content = content.replace(marker, "")
-                continue
-            source_url = result.get("source_url") or result.get("guid", {}).get("rendered", "")
-            if not source_url:
-                content = content.replace(marker, "")
-                continue
+
+            source_url = str(image.get("source_url") or "")
+            media_id = image.get("media_id")
+            reused = bool(source_url and media_id)
+
+            if not reused:
+                result = self._upload_local_image(image)
+                if not result:
+                    content = content.replace(marker, "")
+                    continue
+                source_url = result.get("source_url") or result.get("guid", {}).get("rendered", "")
+                media_id = result.get("id")
+                if not source_url:
+                    content = content.replace(marker, "")
+                    continue
+
             content = content.replace(marker, build_inline_image_html(image, source_url))
-            uploaded.append({"id": result.get("id"), "file": image.get("file")})
-        return content, uploaded
+            if reused:
+                self.stats["media_reused"] += 1
+            resolved.append({
+                "id": media_id,
+                "file": image.get("file"),
+                "reused": reused,
+            })
+        return content, resolved
 
     def _upload_local_image(self, image: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Upload a curated local WebP file without downloading it from the web."""
@@ -449,6 +495,7 @@ class WordPressPublisher(DataProcessingNode):
                             tags=tags,
                             featured_image_url=item.get("featured_image_url"),
                             featured_image_path=item.get("featured_image_path"),
+                            featured_media_id=item.get("featured_media_id"),
                             editorial_images=item.get("editorial_images", []),
                             publish_status=item.get("publish_status", self.default_status),
                             schedule_date=item.get("schedule_date"),
@@ -479,6 +526,7 @@ class WordPressPublisher(DataProcessingNode):
                     tags=input_data.get("tags", []),
                     featured_image_url=input_data.get("featured_image_url"),
                     featured_image_path=input_data.get("featured_image_path"),
+                    featured_media_id=input_data.get("featured_media_id"),
                     editorial_images=input_data.get("editorial_images", []),
                     publish_status=input_data.get("publish_status", self.default_status),
                     schedule_date=input_data.get("schedule_date"),
@@ -510,17 +558,7 @@ class WordPressPublisher(DataProcessingNode):
         self.logger.debug("WordPress发布器执行前处理")
 
         # 重置统计信息
-        self.stats = {
-            "total_posts": 0,
-            "posts_published": 0,
-            "posts_failed": 0,
-            "categories_created": 0,
-            "tags_created": 0,
-            "media_uploads": 0,
-            "batches_processed": 0,
-            "api_errors": 0,
-            "total_time": 0.0,
-        }
+        self.stats = self._empty_stats()
 
         # 初始化WordPress客户端
         self._initialize_client()
