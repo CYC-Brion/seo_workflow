@@ -98,8 +98,12 @@ class TestModule2Workflow:
         mock_content_client.chat_completion.side_effect = content_chat_completion_side_effect
         mock_get_content_client.return_value = mock_content_client
 
-        # 3. 创建测试Excel文件（使用实际测试用例文件路径）
-        test_excel_path = Path("D:/工作流项目/测试用例.xlsx")
+        # 3. 创建测试Excel文件（优先使用仓库内的样例工作簿）
+        # 锚定到仓库根，不用绝对路径 —— 原来写死 D:/工作流项目/ 只在作者机器上成立
+        test_excel_path = (
+            Path(__file__).resolve().parents[2]
+            / "keyword_library" / "sample_keywords.xlsx"
+        )
         if not test_excel_path.exists():
             # 如果实际文件不存在，创建临时测试文件
             test_keywords = ["hardware", "Lighting accessories", "lamp holder"]

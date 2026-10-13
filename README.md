@@ -17,6 +17,26 @@ schedules them as WordPress posts with a future timestamp. All publishing happen
 locally. There is no GitHub Actions publisher — it was removed so the repository can
 never publish anything on its own.
 
+## Installation
+Python 3.8+ with the repository run from its own root directory.
+
+```bash
+pip install -e ".[dev]"
+```
+
+`pyproject.toml` is the single source of truth for dependencies. There is no
+`requirements.txt`: it used to exist, disagreed with `pyproject.toml`, and roughly
+half of its contents were packages nothing in the codebase ever imported.
+
+| Extra | Adds | Needed for |
+|---|---|---|
+| *(none)* | pipeline runtime | `workflow run` |
+| `dev` | pytest, pytest-cov, black, flake8, mypy | running the test suite |
+| `browser` | playwright | Google Suggest browser fallback only — the code catches the missing import and carries on without it |
+
+Credentials live in `.env` at the repository root. Copy `.env.example` and fill it
+in; the real `.env` is gitignored and must never be committed.
+
 ## Current Default Behavior
 The default scheduling configuration is:
 
@@ -53,7 +73,7 @@ Notes:
 With the current defaults, run:
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx
 ```
 
 This will:
@@ -69,31 +89,31 @@ This will:
 ### Use default scheduling
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx
 ```
 
 ### Start publishing 24 hours later
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --schedule-hours 24
 ```
 
 ### Start 24 hours later and stagger by 12 hours
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24 --schedule-interval-hours 12
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --schedule-hours 24 --schedule-interval-hours 12
 ```
 
 ### Schedule all posts at the same time
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24 --schedule-interval-hours 0
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --schedule-hours 24 --schedule-interval-hours 0
 ```
 
 ### Dry run
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --dry-run
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --dry-run
 ```
 
 ## What To Check After A Run

@@ -9,6 +9,7 @@ This folder holds the keyword-related source files for the SEO workflow.
 - `seo_phase3_long_cycle_part2..part5*.xlsx` - split slices of the long-cycle plan, used to run the batch in stages
 - `done-seo_phase3_long_cycle_part1.xlsx` - part 1, already published (kept for reference)
 - `seo_pending_43_standard_batch.xlsx` / `seo_pending_43_hourly_schedule.xlsx` - working queues for the currently pending batch of articles
+- `sample_keywords.xlsx` - 9-keyword sample workbook (placeholder terms only, safe to run) used as the example input in `README.md` and `docs/Guiding.md`
 - `seo_keyword_plan.md` - keyword planning and execution notes
 
 ## Recommended Usage

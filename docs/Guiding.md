@@ -55,7 +55,7 @@ TIMEZONE = "UTC"
 如果你使用当前默认配置，直接运行：
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx
 ```
 
 这条命令会：
@@ -71,33 +71,33 @@ python -m src.cli.main workflow run 测试用例.xlsx
 ### 5.1 使用默认排期
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx
 ```
 
 ### 5.2 指定首篇发布时间
 例如 24 小时后开始发布：
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --schedule-hours 24
 ```
 
 ### 5.3 指定每篇发布时间间隔
 例如第一篇 24 小时后发布，后面每篇相隔 12 小时：
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24 --schedule-interval-hours 12
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --schedule-hours 24 --schedule-interval-hours 12
 ```
 
 ### 5.4 所有文章同一时间排期
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --schedule-hours 24 --schedule-interval-hours 0
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --schedule-hours 24 --schedule-interval-hours 0
 ```
 
 ### 5.5 仅验证流程，不调用 AI 和 WordPress
 
 ```bash
-python -m src.cli.main workflow run 测试用例.xlsx --dry-run
+python -m src.cli.main workflow run keyword_library/sample_keywords.xlsx --dry-run
 ```
 
 ## 6. 运行后看什么
