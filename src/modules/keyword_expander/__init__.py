@@ -5,12 +5,14 @@
 
 from .keyword_expander import (
     KeywordExpansionResult,
+    KeywordIdea,
     KeywordExpander,
     expand_keywords,
 )
 
 __all__ = [
     "KeywordExpansionResult",
+    "KeywordIdea",
     "KeywordExpander",
     "expand_keywords",
 ]

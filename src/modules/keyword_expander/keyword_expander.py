@@ -4,15 +4,17 @@
 """
 
 import json
+import os
 import time
 import re
 from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import quote, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import requests
 from requests.adapters import HTTPAdapter
+from requests.exceptions import ConnectionError as RequestsConnectionError, ProxyError
 from urllib3.util.retry import Retry
 
 from src.core import DataProcessingNode
@@ -26,6 +28,36 @@ class KeywordExpansionResult:
     keyword_sources: Dict[str, List[str]]  # 关键词 -> 来源列表
     expansion_stats: Dict[str, Any]  # 扩展统计
     metadata: Dict[str, Any]  # 元数据
+    ideas: List["KeywordIdea"] = field(default_factory=list)
+
+
+@dataclass
+class KeywordIdea:
+    """Normalized keyword research data from any expansion source."""
+
+    keyword: str
+    sources: List[str] = field(default_factory=list)
+    seed_keywords: List[str] = field(default_factory=list)
+    avg_monthly_searches: Optional[int] = None
+    competition: Optional[str] = None
+    competition_index: Optional[int] = None
+    low_top_of_page_bid_micros: Optional[int] = None
+    high_top_of_page_bid_micros: Optional[int] = None
+    monthly_search_volumes: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serializable copy for workflow state or exports."""
+        return {
+            "keyword": self.keyword,
+            "sources": list(self.sources),
+            "seed_keywords": list(self.seed_keywords),
+            "avg_monthly_searches": self.avg_monthly_searches,
+            "competition": self.competition,
+            "competition_index": self.competition_index,
+            "low_top_of_page_bid_micros": self.low_top_of_page_bid_micros,
+            "high_top_of_page_bid_micros": self.high_top_of_page_bid_micros,
+            "monthly_search_volumes": [dict(volume) for volume in self.monthly_search_volumes],
+        }
 
 
 class KeywordExpander(DataProcessingNode):
@@ -76,21 +108,41 @@ class KeywordExpander(DataProcessingNode):
         self.google_api_key = config.get("google_api_key")
         self.google_search_engine_id = config.get("google_search_engine_id")
         self.http_proxy = config.get("http_proxy")
+        self.enable_public_suggestions = config.get("enable_public_suggestions", True)
+        self.google_ads_language = str(config.get("google_ads_language", "languageConstants/1000"))
+        self.google_ads_geo_target_constants = list(
+            config.get("google_ads_geo_target_constants", ["geoTargetConstants/2840"])
+        )
+        self.google_ads_keyword_plan_network = str(
+            config.get("google_ads_keyword_plan_network", "GOOGLE_SEARCH")
+        )
         self.enable_google_browser_fallback = config.get("enable_google_browser_fallback", False)
         self.browser_fallback_timeout_seconds = config.get("browser_fallback_timeout_seconds", 20)
 
         # 检查是否配置了Google API
         self.has_google_api = bool(self.google_api_key and self.google_search_engine_id)
+        self.google_ads_config = {
+            key: config.get(key.lower()) or os.getenv(key, "")
+            for key in ("GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN", "GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_LOGIN_CUSTOMER_ID")
+        }
+        self.has_google_ads_keyword_planner = all(self.google_ads_config.values())
+        self._google_ads_access_token: Optional[str] = None
+        self.last_result: Optional[KeywordExpansionResult] = None
 
         # 创建带指数退避重试的 requests Session
         retry_strategy = Retry(
             total=self.max_retries,
+            connect=0,
+            read=0,
             backoff_factor=self.request_delay_seconds,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session = requests.Session()
+        # Do not silently inherit a stale system proxy. The optional project proxy
+        # below is the only proxy used, and can be disabled after a quick failure.
+        self.session.trust_env = False
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         self.session.headers.update({"User-Agent": self.USER_AGENT})
@@ -102,6 +154,7 @@ class KeywordExpander(DataProcessingNode):
                 "https": self.http_proxy,
             }
             self.logger.info(f"代理已配置: {self.http_proxy}")
+        self._proxy_active = bool(self.http_proxy)
 
         # 端点缓存 & robots.txt 缓存
         self._last_successful_google_endpoint_idx = 0
@@ -114,6 +167,9 @@ class KeywordExpander(DataProcessingNode):
             "keywords_failed": 0,
             "total_expansions": 0,
             "api_requests": 0,
+            "google_ads_keyword_planner_requests": 0,
+            "google_ads_keyword_planner_failures": 0,
+            "google_ads_ideas_with_metrics": 0,
             "google_suggest_requests": 0,
             "google_browser_fallback_requests": 0,
             "bing_suggest_requests": 0,
@@ -126,10 +182,29 @@ class KeywordExpander(DataProcessingNode):
                 "max_expansions_per_keyword": self.max_expansions_per_keyword,
                 "has_google_api": self.has_google_api,
                 "enable_google_browser_fallback": self.enable_google_browser_fallback,
+                "google_ads_language": self.google_ads_language,
+                "google_ads_geo_target_constants": self.google_ads_geo_target_constants,
                 "max_retries": self.max_retries,
                 "http_proxy": self.http_proxy,
             }
         )
+
+    def _get(self, url: str, **kwargs: Any) -> requests.Response:
+        """Use the configured proxy when available, then fall back to direct access.
+
+        A local proxy is often transient. Keeping it after a connection refusal
+        makes every keyword wait through the retry budget, so disable it once for
+        the rest of the batch and continue with a direct request.
+        """
+        try:
+            return self.session.get(url, **kwargs)
+        except (ProxyError, RequestsConnectionError) as exc:
+            if not self._proxy_active:
+                raise
+            self._proxy_active = False
+            self.session.proxies = {}
+            self.logger.warning(f"代理不可用，已切换为直连: {exc}")
+            return self.session.get(url, **kwargs)
 
     def execute_impl(self, input_data: Any) -> Any:
         """执行关键词扩展
@@ -161,12 +236,14 @@ class KeywordExpander(DataProcessingNode):
 
             try:
                 # 获取扩展关键词
-                expansions = self._expand_keyword(keyword)
+                ideas = self._expand_keyword_ideas(keyword)
+                expansions = [idea.keyword for idea in ideas]
 
                 # 记录结果
                 if expansions:
                     expansion_result.expanded_keywords.extend(expansions)
                     expansion_result.keyword_sources[keyword] = expansions
+                    expansion_result.ideas.extend(ideas)
                     self.stats["keywords_expanded"] += 1
                     self.stats["total_expansions"] += len(expansions)
 
@@ -197,6 +274,17 @@ class KeywordExpander(DataProcessingNode):
 
         # 合并结果（原关键词 + 扩展关键词）
         all_keywords = self._merge_keywords(expansion_result)
+        expansion_result.ideas = self._merge_ideas(
+            [
+                KeywordIdea(keyword=keyword, sources=["seed"], seed_keywords=[keyword])
+                for keyword in keywords
+            ] + expansion_result.ideas
+        )
+        expansion_result.metadata.update({
+            "google_ads_keyword_planner_enabled": self.has_google_ads_keyword_planner,
+            "keyword_idea_count": len(expansion_result.ideas),
+        })
+        self.last_result = expansion_result
 
         # 记录统计信息
         self._log_statistics(expansion_result, all_keywords)
@@ -230,22 +318,43 @@ class KeywordExpander(DataProcessingNode):
         return keywords
 
     def _expand_keyword(self, keyword: str) -> List[str]:
+        """Backward-compatible string-only expansion interface."""
+        return [idea.keyword for idea in self._expand_keyword_ideas(keyword)]
+
+    def _expand_keyword_ideas(self, keyword: str) -> List[KeywordIdea]:
         """扩展单个关键词
 
         同时查询 Google Suggest + Bing Suggest（以及可选的 Google Custom Search API），
         只要任一来源成功就继续。合并去重后返回。
         """
-        all_expansions: List[str] = []
+        all_ideas: List[KeywordIdea] = []
         source_errors: List[str] = []
 
+        if self.has_google_ads_keyword_planner:
+            try:
+                planner_expansions = self._get_google_ads_keyword_ideas(keyword)
+                self.stats["google_ads_keyword_planner_requests"] += 1
+                if planner_expansions:
+                    all_ideas.extend(planner_expansions)
+                    self.stats["google_ads_ideas_with_metrics"] += sum(
+                        1 for idea in planner_expansions
+                        if idea.avg_monthly_searches is not None
+                    )
+            except Exception as exc:
+                self.stats["google_ads_keyword_planner_failures"] += 1
+                self.logger.warning(f"Google Ads Keyword Planner 失败: {exc}")
+                source_errors.append(f"Google Ads Keyword Planner: {exc}")
+
         # 1. Google Custom Search API（需配置 API 密钥）
-        if self.has_google_api:
+        if self.enable_public_suggestions and self.has_google_api:
             self.logger.debug(f"尝试 Google Custom Search API: {keyword}")
             try:
                 expansions = self._expand_with_google_custom_search(keyword)
                 if expansions:
                     self.stats["api_requests"] += 1
-                    all_expansions.extend(expansions)
+                    all_ideas.extend(
+                        self._ideas_from_strings(expansions, "google_custom_search", keyword)
+                    )
                     self.logger.debug(f"Custom Search API 成功", keyword=keyword, count=len(expansions))
             except Exception as e:
                 err_msg = f"Google Custom Search API: {e}"
@@ -257,10 +366,14 @@ class KeywordExpander(DataProcessingNode):
         google_expansions: List[str] = []
         google_error: Optional[Exception] = None
         try:
+            if not self.enable_public_suggestions:
+                raise RuntimeError("公共建议源已禁用")
             google_expansions = self._get_google_suggestions(keyword)
             if google_expansions:
                 self.stats["google_suggest_requests"] += 1
-                all_expansions.extend(google_expansions)
+                all_ideas.extend(
+                    self._ideas_from_strings(google_expansions, "google_suggest", keyword)
+                )
                 self.logger.debug(f"Google Suggest 成功", keyword=keyword, count=len(google_expansions))
             else:
                 raise RuntimeError("Google Suggest 返回空结果")
@@ -269,13 +382,21 @@ class KeywordExpander(DataProcessingNode):
             self.logger.warning(f"Google Suggest 失败: {e}")
             source_errors.append(f"Google Suggest: {e}")
 
-        if not google_expansions and self.enable_google_browser_fallback:
+        if (
+            self.enable_public_suggestions
+            and not google_expansions
+            and self.enable_google_browser_fallback
+        ):
             self.logger.debug(f"尝试 Google 浏览器模拟兜底: {keyword}")
             try:
                 browser_expansions = self._get_google_suggestions_via_browser(keyword)
                 if browser_expansions:
                     self.stats["google_browser_fallback_requests"] += 1
-                    all_expansions.extend(browser_expansions)
+                    all_ideas.extend(
+                        self._ideas_from_strings(
+                            browser_expansions, "google_browser_fallback", keyword
+                        )
+                    )
                     google_expansions = browser_expansions
                     self.logger.debug(
                         f"Google 浏览器兜底成功",
@@ -290,10 +411,14 @@ class KeywordExpander(DataProcessingNode):
         self.logger.debug(f"尝试 Bing Suggest: {keyword}")
         bing_expansions: List[str] = []
         try:
+            if not self.enable_public_suggestions:
+                raise RuntimeError("公共建议源已禁用")
             bing_expansions = self._get_bing_suggestions(keyword)
             if bing_expansions:
                 self.stats["bing_suggest_requests"] += 1
-                all_expansions.extend(bing_expansions)
+                all_ideas.extend(
+                    self._ideas_from_strings(bing_expansions, "bing_suggest", keyword)
+                )
                 self.logger.debug(f"Bing Suggest 成功", keyword=keyword, count=len(bing_expansions))
             else:
                 raise RuntimeError("Bing Suggest 返回空结果")
@@ -301,21 +426,143 @@ class KeywordExpander(DataProcessingNode):
             self.logger.warning(f"Bing Suggest 失败: {e}")
             source_errors.append(f"Bing Suggest: {e}")
 
-        if not all_expansions:
+        if not all_ideas:
             error_text = "; ".join(source_errors) if source_errors else "无可用扩展来源"
             raise RuntimeError(f"关键词 '{keyword}': 所有扩展来源都不可用 — {error_text}")
 
-        # 合并去重（Google + Bing 可能有重复建议）
-        unique: List[str] = []
-        seen: set = set()
-        kw_lower = keyword.lower()
-        for exp in all_expansions:
-            exp_lower = exp.lower()
-            if exp_lower not in seen and exp_lower != kw_lower:
-                seen.add(exp_lower)
-                unique.append(exp)
+        unique = [
+            idea for idea in self._merge_ideas(all_ideas)
+            if idea.keyword.lower() != keyword.lower()
+        ]
+        return self._select_top_ideas(unique, self.max_expansions_per_keyword)
 
-        return unique[:self.max_expansions_per_keyword]
+    @staticmethod
+    def _select_top_ideas(ideas: List[KeywordIdea], limit: int) -> List[KeywordIdea]:
+        """按平均月搜索量降序取前 limit 条。
+
+        Keyword Planner 一次可能返回上百条候选，直接切片等于按 API 返回顺序截断，
+        会把高搜索量的词丢掉。这里改为按需求量排序后再截断，保证每个种子词产出的
+        是最有流量价值的词。
+
+        没有搜索量数据的情况（Suggest 类来源不带指标，或 Planner 未返回
+        avgMonthlySearches）按 0 处理，排在有数据的词之后；同分时保持原顺序。
+        """
+        def sort_key(indexed_idea: Tuple[int, KeywordIdea]) -> Tuple[int, int]:
+            index, idea = indexed_idea
+            volume = idea.avg_monthly_searches
+            return (-(volume if volume is not None else 0), index)
+
+        ranked = sorted(enumerate(ideas), key=sort_key)
+        return [idea for _, idea in ranked[:limit]]
+
+    @staticmethod
+    def _ideas_from_strings(
+        keywords: List[str], source: str, seed_keyword: str
+    ) -> List[KeywordIdea]:
+        return [
+            KeywordIdea(
+                keyword=str(item).strip(),
+                sources=[source],
+                seed_keywords=[seed_keyword],
+            )
+            for item in keywords
+            if str(item).strip()
+        ]
+
+    @staticmethod
+    def _merge_ideas(ideas: List[KeywordIdea]) -> List[KeywordIdea]:
+        """Merge duplicate phrases, retaining all sources and Planner metrics."""
+        merged: Dict[str, KeywordIdea] = {}
+        for idea in ideas:
+            normalized = idea.keyword.strip().lower()
+            if not normalized:
+                continue
+            if normalized not in merged:
+                merged[normalized] = KeywordIdea(
+                    keyword=idea.keyword.strip(),
+                    sources=list(idea.sources),
+                    seed_keywords=list(idea.seed_keywords),
+                    avg_monthly_searches=idea.avg_monthly_searches,
+                    competition=idea.competition,
+                    competition_index=idea.competition_index,
+                    low_top_of_page_bid_micros=idea.low_top_of_page_bid_micros,
+                    high_top_of_page_bid_micros=idea.high_top_of_page_bid_micros,
+                    monthly_search_volumes=[dict(volume) for volume in idea.monthly_search_volumes],
+                )
+                continue
+
+            current = merged[normalized]
+            current.sources = list(dict.fromkeys(current.sources + idea.sources))
+            current.seed_keywords = list(dict.fromkeys(current.seed_keywords + idea.seed_keywords))
+            for metric in (
+                "avg_monthly_searches", "competition", "competition_index",
+                "low_top_of_page_bid_micros", "high_top_of_page_bid_micros",
+            ):
+                if getattr(current, metric) is None and getattr(idea, metric) is not None:
+                    setattr(current, metric, getattr(idea, metric))
+            if not current.monthly_search_volumes and idea.monthly_search_volumes:
+                current.monthly_search_volumes = [dict(volume) for volume in idea.monthly_search_volumes]
+        return list(merged.values())
+
+    def _get_google_ads_keyword_ideas(self, keyword: str) -> List[KeywordIdea]:
+        """Return Planner ideas with demand and commercial metrics (US English)."""
+        cfg = self.google_ads_config
+        if not self._google_ads_access_token:
+            token_response = self.session.post(
+                "https://oauth2.googleapis.com/token",
+                data={"grant_type": "refresh_token", "client_id": cfg["GOOGLE_ADS_CLIENT_ID"], "client_secret": cfg["GOOGLE_ADS_CLIENT_SECRET"], "refresh_token": cfg["GOOGLE_ADS_REFRESH_TOKEN"]},
+                timeout=20,
+            )
+            token_response.raise_for_status()
+            self._google_ads_access_token = token_response.json()["access_token"]
+
+        response = self.session.post(
+            f"https://googleads.googleapis.com/v25/customers/{cfg['GOOGLE_ADS_CUSTOMER_ID']}:generateKeywordIdeas",
+            headers={"Authorization": f"Bearer {self._google_ads_access_token}", "developer-token": cfg["GOOGLE_ADS_DEVELOPER_TOKEN"], "login-customer-id": cfg["GOOGLE_ADS_LOGIN_CUSTOMER_ID"]},
+            json={
+                "language": self.google_ads_language,
+                "geoTargetConstants": self.google_ads_geo_target_constants,
+                "keywordPlanNetwork": self.google_ads_keyword_plan_network,
+                "includeAdultKeywords": False,
+                "keywordSeed": {"keywords": [keyword]},
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        ideas: List[KeywordIdea] = []
+        for item in response.json().get("results", []):
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            metrics = item.get("keywordIdeaMetrics") or {}
+            volumes = [
+                {
+                    "year": volume.get("year"),
+                    "month": volume.get("month"),
+                    "monthly_searches": self._as_optional_int(volume.get("monthlySearches")),
+                }
+                for volume in metrics.get("monthlySearchVolumes") or []
+                if isinstance(volume, dict)
+            ]
+            ideas.append(KeywordIdea(
+                keyword=text,
+                sources=["google_ads_keyword_planner"],
+                seed_keywords=[keyword],
+                avg_monthly_searches=self._as_optional_int(metrics.get("avgMonthlySearches")),
+                competition=metrics.get("competition"),
+                competition_index=self._as_optional_int(metrics.get("competitionIndex")),
+                low_top_of_page_bid_micros=self._as_optional_int(metrics.get("lowTopOfPageBidMicros")),
+                high_top_of_page_bid_micros=self._as_optional_int(metrics.get("highTopOfPageBidMicros")),
+                monthly_search_volumes=volumes,
+            ))
+        return ideas
+
+    @staticmethod
+    def _as_optional_int(value: Any) -> Optional[int]:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _check_robots_txt(self, url: str) -> bool:
         """检查 robots.txt 是否允许抓取，结果按域名缓存"""
@@ -327,7 +574,7 @@ class KeywordExpander(DataProcessingNode):
 
         try:
             robots_url = urljoin(base_url, "/robots.txt")
-            response = self.session.get(robots_url, timeout=5)
+            response = self._get(robots_url, timeout=5)
             if response.status_code == 200:
                 rp = RobotFileParser()
                 rp.parse(response.text.splitlines())
@@ -358,7 +605,7 @@ class KeywordExpander(DataProcessingNode):
                 "hl": "en",
             }
 
-            response = self.session.get(url, params=params, timeout=10)
+            response = self._get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
 
@@ -404,7 +651,7 @@ class KeywordExpander(DataProcessingNode):
                 continue
 
             try:
-                response = self.session.get(endpoint, timeout=5)
+                response = self._get(endpoint, timeout=5)
                 response.raise_for_status()
 
                 data = response.json()
@@ -509,7 +756,7 @@ class KeywordExpander(DataProcessingNode):
         url = self.BING_SUGGEST_ENDPOINT.format(query=encoded_keyword)
 
         try:
-            response = self.session.get(url, timeout=5)
+            response = self._get(url, timeout=5)
             response.raise_for_status()
 
             data = response.json()
@@ -572,6 +819,9 @@ class KeywordExpander(DataProcessingNode):
             keywords_failed=self.stats["keywords_failed"],
             total_expansions=self.stats["total_expansions"],
             api_requests=self.stats["api_requests"],
+            google_ads_keyword_planner_requests=self.stats["google_ads_keyword_planner_requests"],
+            google_ads_keyword_planner_failures=self.stats["google_ads_keyword_planner_failures"],
+            google_ads_ideas_with_metrics=self.stats["google_ads_ideas_with_metrics"],
             google_suggest_requests=self.stats["google_suggest_requests"],
             bing_suggest_requests=self.stats["bing_suggest_requests"],
             original_count=expansion_stats.get("original_count", 0),
@@ -627,6 +877,15 @@ class KeywordExpander(DataProcessingNode):
         """获取处理统计信息"""
         return self.stats.copy()
 
+    def get_keyword_metadata(self) -> Dict[str, Dict[str, Any]]:
+        """Return research data keyed by keyword without changing the old output API."""
+        if not self.last_result:
+            return {}
+        return {
+            idea.keyword: idea.to_dict()
+            for idea in self.last_result.ideas
+        }
+
 
 # 工具函数
 def expand_keywords(
@@ -664,6 +923,7 @@ def expand_keywords(
 
 __all__ = [
     "KeywordExpansionResult",
+    "KeywordIdea",
     "KeywordExpander",
     "expand_keywords",
 ]

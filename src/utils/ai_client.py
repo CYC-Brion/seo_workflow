@@ -442,10 +442,12 @@ class AzureOpenAIClient(AIClient):
         try:
             api_messages = [msg.to_dict() for msg in messages]
 
+            # temperature 有意不发送：当前部署（gpt-6.1-sol）是推理模型，只接受
+            # 默认值 1，传入 0.7/0.8 会直接返回 400 unsupported_value。参数仍保留在
+            # 签名中以保持与 AIClient 接口及其他 provider 一致，只是不转发给 Azure。
             api_kwargs = {
                 "model": self.model,
                 "messages": api_messages,
-                "temperature": temperature,
                 "timeout": self.timeout,
                 "stream": True,
                 "stream_options": {"include_usage": True},

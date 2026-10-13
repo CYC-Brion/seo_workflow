@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openpyxl import load_workbook
 
+from config.settings import BASE_DIR
 from src.utils import get_logger, config_manager
 from src.modules import (
     ExcelProcessor,
@@ -22,6 +23,7 @@ from src.modules import (
     WordPressPublisher,
 )
 from src.core import WorkflowEngine, StateManager, WorkflowState, WorkflowStatus
+from src.enhanced_features.image_integration import EditorialImageLibrary
 
 
 logger = get_logger("cli")
@@ -468,13 +470,22 @@ def setup_parser() -> argparse.ArgumentParser:
     )
     workflow_run_parser.add_argument(
         "-o", "--output-dir",
-        default="./output",
-        help="输出目录（默认: ./output）"
+        # 锚定项目根下的 output/，避免随启动目录漂移。注意这里刻意不用
+        # config.settings.OUTPUT_DIR —— 那个指向 data/output，放的是中间研究产物；
+        # scripts/schedule_pending_articles.py 与 build_article_keyword_queue.py
+        # 都从 <root>/output 读 workflow_*.json，改动这里会让它们读不到。
+        default=str(BASE_DIR / "output"),
+        help=f"输出目录（默认: {BASE_DIR / 'output'}）"
     )
     workflow_run_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="试运行，不调用AI和外部API"
+    )
+    workflow_run_parser.add_argument(
+        "--use-preselected-keywords",
+        action="store_true",
+        help="输入文件已完成关键词研究与筛选：跳过扩词和AI关键词筛选，仅为表内关键词生成内容"
     )
     workflow_run_parser.add_argument(
         "--resume",
@@ -917,6 +928,7 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         dry_run = args.dry_run
+        use_preselected_keywords = getattr(args, "use_preselected_keywords", False)
         if dry_run:
             print("=" * 60)
             print("  DRY-RUN 模式 — 跳过 AI 调用和 WordPress 发布")
@@ -935,7 +947,18 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         step = 1
         total_steps = 6
         print(f"[{step}/{total_steps}] 读取 Excel 关键词...")
-        excel_processor = ExcelProcessor("excel_reader", config={})
+        # Operational workbooks place an executive Overview before the machine-
+        # readable queue. Prefer the conventional ``keywords`` sheet when it is
+        # available, while retaining first-sheet compatibility for ad-hoc files.
+        input_sheet_name: Any = 0
+        try:
+            input_workbook = load_workbook(input_path, read_only=True, data_only=True)
+            if "keywords" in input_workbook.sheetnames:
+                input_sheet_name = "keywords"
+            input_workbook.close()
+        except Exception:
+            pass
+        excel_processor = ExcelProcessor("excel_reader", config={"sheet_name": input_sheet_name})
         result = excel_processor.execute(input_path)
         if result.status.value != "completed":
             print(f"  [FAIL] Excel 读取失败: {result.error_message}")
@@ -963,48 +986,67 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         # 步骤 2: 关键词扩展
         # ============================
         step += 1
-        print(f"\n[{step}/{total_steps}] 扩展关键词...")
-        expander_config = {
-            "max_expansions_per_keyword": 10,
-            "request_delay_seconds": 2,
-            "enable_google_browser_fallback": os.getenv("ENABLE_GOOGLE_BROWSER_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"},
-            "browser_fallback_timeout_seconds": float(os.getenv("GOOGLE_BROWSER_FALLBACK_TIMEOUT_SECONDS", "20")),
-        }
-        http_proxy = os.getenv("HTTP_PROXY")
-        if http_proxy:
-            expander_config["http_proxy"] = http_proxy
-        expander = KeywordExpander("keyword_expander", config=expander_config)
-        result = expander.execute(keywords)
-        if result.status.value != "completed":
-            print(f"  [FAIL] 关键词扩展失败: {result.error_message}")
-            return 1
-        expanded_keywords: list = result.output_data
-
-        # 扩展关键词继承父关键词的分类
         from config.wordpress_config import DEFAULT_AI_CATEGORY
-        keyword_categories: Dict[str, str] = {}
-        for ekw in expanded_keywords:
-            assigned = False
-            for okw, cat in original_categories.items():
-                if ekw == okw or ekw.startswith(okw + " "):
-                    keyword_categories[ekw] = cat
-                    assigned = True
-                    break
-            if not assigned:
-                keyword_categories[ekw] = DEFAULT_AI_CATEGORY
+        if use_preselected_keywords:
+            expanded_keywords = keywords
+            keyword_categories = {
+                keyword: original_categories.get(keyword, DEFAULT_AI_CATEGORY)
+                for keyword in expanded_keywords
+            }
+            print(f"\n[{step}/{total_steps}] 扩展关键词...")
+            print("  [SKIP] 使用已精选词库：不再调用关键词扩展服务")
+        else:
+            print(f"\n[{step}/{total_steps}] 扩展关键词...")
+            expander_config = {
+                "max_expansions_per_keyword": 10,
+                "request_delay_seconds": 2,
+                "enable_google_browser_fallback": os.getenv("ENABLE_GOOGLE_BROWSER_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"},
+                "browser_fallback_timeout_seconds": float(os.getenv("GOOGLE_BROWSER_FALLBACK_TIMEOUT_SECONDS", "20")),
+            }
+            http_proxy = os.getenv("HTTP_PROXY")
+            if http_proxy:
+                expander_config["http_proxy"] = http_proxy
+            expander = KeywordExpander("keyword_expander", config=expander_config)
+            result = expander.execute(keywords)
+            if result.status.value != "completed":
+                print(f"  [FAIL] 关键词扩展失败: {result.error_message}")
+                return 1
+            expanded_keywords = result.output_data
 
-        expander_stats = expander.get_statistics()
-        print(f"  [OK] 扩展完成: {len(keywords)} → {len(expanded_keywords)} 个关键词")
-        print(f"  Google API: {expander_stats.get('api_requests', 0)}, "
-              f"Google Suggest: {expander_stats.get('google_suggest_requests', 0)}, "
-              f"Bing Suggest: {expander_stats.get('bing_suggest_requests', 0)}")
+            # 扩展关键词继承父关键词的分类
+            keyword_categories = {}
+            for ekw in expanded_keywords:
+                assigned = False
+                for okw, cat in original_categories.items():
+                    if ekw == okw or ekw.startswith(okw + " "):
+                        keyword_categories[ekw] = cat
+                        assigned = True
+                        break
+                if not assigned:
+                    keyword_categories[ekw] = DEFAULT_AI_CATEGORY
+
+            expander_stats = expander.get_statistics()
+            print(f"  [OK] 扩展完成: {len(keywords)} → {len(expanded_keywords)} 个关键词")
+            print(f"  Google API: {expander_stats.get('api_requests', 0)}, "
+                  f"Google Suggest: {expander_stats.get('google_suggest_requests', 0)}, "
+                  f"Bing Suggest: {expander_stats.get('bing_suggest_requests', 0)}")
+            planner_ok = expander_stats.get("google_ads_keyword_planner_requests", 0)
+            planner_failed = expander_stats.get("google_ads_keyword_planner_failures", 0)
+            print(f"  Google Ads Keyword Planner: {planner_ok} 成功, {planner_failed} 失败")
+            if planner_failed and not planner_ok:
+                print("  [WARN]  Google Ads 关键词规划师全部失败——本次扩展只剩 Bing Suggest 供货，")
+                print("          关键词会明显偏向本地化/低商业意图（如 'xxx near me'）。")
+                print("          常见原因：本地代理未启动（.env 的 HTTP_PROXY），或 Google Ads developer token 仍是 Test Access。")
 
         # ============================
         # 步骤 3: AI 关键词筛选
         # ============================
         step += 1
         print(f"\n[{step}/{total_steps}] AI 关键词筛选...")
-        if dry_run:
+        if use_preselected_keywords:
+            print("  [SKIP] 使用已精选词库：不再调用AI关键词筛选")
+            filtered_keywords = expanded_keywords
+        elif dry_run:
             print("  [SKIP]  DRY-RUN: 跳过AI筛选，保留所有关键词")
             filtered_keywords = expanded_keywords
         else:
@@ -1120,6 +1162,30 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
         for i, c in enumerate(contents[:2]):
             print(f"  文章 {i+1}: {len(c)} 字符, 预览: {c[:100]}...")
 
+        article_meta = getattr(content_generator, '_article_meta', {}) if not dry_run else {}
+        article_metas = [article_meta.get(content, {}) for content in contents]
+
+        # Select images only after the final article structure is available, so body
+        # evidence can be placed beside the section it actually supports.
+        image_library = EditorialImageLibrary()
+        article_image_plans = []
+        for index, content in enumerate(contents):
+            item = workflow_items[index] if index < len(workflow_items) else {}
+            title = titles[index] if index < len(titles) else item.get("title", "")
+            image_plan = image_library.plan_article_images(item, title, content)
+            contents[index] = image_plan.content
+            article_image_plans.append(image_plan)
+        featured_count = sum(
+            1 for image_plan in article_image_plans if image_plan.featured_image
+        )
+        inline_count = sum(
+            len(image_plan.inline_images) for image_plan in article_image_plans
+        )
+        print(
+            f"  [OK] 图片策划: {featured_count} 张首图, "
+            f"{inline_count} 张正文证据图"
+        )
+
         # ============================
         # 步骤 6: WordPress 发布
         # ============================
@@ -1148,15 +1214,23 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                     f"interval {schedule_interval_hours} hour(s)"
                 )
 
-        article_meta = getattr(content_generator, '_article_meta', {}) if not dry_run else {}
         wp_inputs = []
         for i, title in enumerate(titles):
             workflow_item = workflow_items[i] if i < len(workflow_items) else {}
             kw = workflow_item.get("keyword", "")
             content = contents[i] if i < len(contents) else ""
-            meta = article_meta.get(content, {})
+            meta = article_metas[i] if i < len(article_metas) else {}
             cat_name = workflow_item.get("category", "") or keyword_categories.get(kw, DEFAULT_AI_CATEGORY)
             post_schedule_date = post_schedule_dates[i] if i < len(post_schedule_dates) else None
+            image_plan = article_image_plans[i] if i < len(article_image_plans) else None
+            featured_image = image_plan.featured_image if image_plan else None
+            inline_images = []
+            if image_plan:
+                for image in image_plan.inline_images:
+                    image_with_path = image.copy()
+                    image_with_path["path"] = str(image_library.library_dir / image["file"])
+                    image_with_path["marker"] = image_library.marker_for(image["file"])
+                    inline_images.append(image_with_path)
             wp_inputs.append({
                 "title": title,
                 "content": content,
@@ -1166,6 +1240,11 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                 "categories": [cat_name],
                 "publish_status": publish_status,
                 "schedule_date": post_schedule_date,
+                "featured_image_path": (
+                    str(image_library.library_dir / featured_image["file"])
+                    if featured_image else None
+                ),
+                "editorial_images": inline_images,
             })
 
         if dry_run:
@@ -1183,7 +1262,7 @@ def handle_workflow_run(args: argparse.Namespace) -> int:
                     "default_status": "draft",
                     "auto_create_categories": False,
                     "auto_create_tags": False,
-                    "enable_media_upload": False,
+                    "enable_media_upload": True,
                 })
                 result = publisher.execute(wp_inputs)
                 if result.status.value == "completed":

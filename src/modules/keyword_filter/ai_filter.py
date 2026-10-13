@@ -6,7 +6,7 @@ AI关键词筛选器
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src.core import AINode
 from src.utils import (
@@ -28,6 +28,9 @@ class KeywordFilterResult:
     confidence_scores: Dict[str, float]  # 关键词 -> 置信度分数 (0-1)
     filter_reasons: Dict[str, str]  # 关键词 -> 过滤原因
     metadata: Dict[str, Any]  # 元数据
+    # AI 调用失败时按兜底策略保留的关键词：这些词没有真实置信度，
+    # 必须绕过 confidence_threshold，否则会被当成低置信度刷掉。
+    fallback_keywords: set = field(default_factory=set)
 
 
 class AIKeywordFilter(AINode):
@@ -166,12 +169,14 @@ class AIKeywordFilter(AINode):
                         for kw in batch:
                             all_results.confidence_scores[kw] = 0.5
                             all_results.filter_reasons[kw] = "AI 调用失败，默认保留"
+                            all_results.fallback_keywords.add(kw)
                 else:
                     # 保留所有关键词作为相关关键词
                     all_results.relevant_keywords.extend(batch)
                     for kw in batch:
                         all_results.confidence_scores[kw] = 0.5
                         all_results.filter_reasons[kw] = "AI 调用失败，默认保留"
+                        all_results.fallback_keywords.add(kw)
 
         # 应用置信度阈值
         filtered_keywords = self._apply_confidence_threshold(all_results)
@@ -423,6 +428,7 @@ class AIKeywordFilter(AINode):
             irrelevant_keywords=result1.irrelevant_keywords + result2.irrelevant_keywords,
             confidence_scores={**result1.confidence_scores, **result2.confidence_scores},
             filter_reasons={**result1.filter_reasons, **result2.filter_reasons},
+            fallback_keywords=result1.fallback_keywords | result2.fallback_keywords,
             metadata={
                 **result1.metadata,
                 **result2.metadata,
@@ -439,7 +445,8 @@ class AIKeywordFilter(AINode):
 
         for kw in result.relevant_keywords:
             confidence = result.confidence_scores.get(kw, 0.5)
-            if confidence >= self.confidence_threshold:
+            # 兜底保留的词没有真实置信度，不能被阈值刷掉
+            if kw in result.fallback_keywords or confidence >= self.confidence_threshold:
                 filtered_keywords.append(kw)
             else:
                 result.irrelevant_keywords.append(kw)

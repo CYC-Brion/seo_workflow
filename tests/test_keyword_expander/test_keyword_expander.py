@@ -320,6 +320,99 @@ class TestKeywordExpander:
         assert result.expanded_keywords == ["exp1", "exp2"]
         assert result.keyword_sources == {"kw1": ["exp1"]}
 
+    def test_google_ads_ideas_keep_keyword_planner_metrics(self):
+        """Keyword Planner metrics must survive parsing instead of being discarded."""
+        expander = KeywordExpander("test-expander")
+        expander.google_ads_config = {
+            "GOOGLE_ADS_DEVELOPER_TOKEN": "developer-token",
+            "GOOGLE_ADS_CLIENT_ID": "client-id",
+            "GOOGLE_ADS_CLIENT_SECRET": "client-secret",
+            "GOOGLE_ADS_REFRESH_TOKEN": "refresh-token",
+            "GOOGLE_ADS_CUSTOMER_ID": "123",
+            "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "456",
+        }
+        token_response = MagicMock()
+        token_response.json.return_value = {"access_token": "access-token"}
+        token_response.raise_for_status.return_value = None
+        ideas_response = MagicMock()
+        ideas_response.json.return_value = {
+            "results": [{
+                "text": "lamp hardware supplier",
+                "keywordIdeaMetrics": {
+                    "avgMonthlySearches": "90",
+                    "competition": "MEDIUM",
+                    "competitionIndex": "42",
+                    "lowTopOfPageBidMicros": "1200000",
+                    "highTopOfPageBidMicros": "3400000",
+                    "monthlySearchVolumes": [{
+                        "year": "2026", "month": "JANUARY", "monthlySearches": "100"
+                    }],
+                },
+            }]
+        }
+        ideas_response.raise_for_status.return_value = None
+
+        with patch.object(expander.session, "post", side_effect=[token_response, ideas_response]):
+            ideas = expander._get_google_ads_keyword_ideas("lighting hardware")
+
+        assert len(ideas) == 1
+        assert ideas[0].avg_monthly_searches == 90
+        assert ideas[0].competition == "MEDIUM"
+        assert ideas[0].competition_index == 42
+        assert ideas[0].low_top_of_page_bid_micros == 1200000
+        assert ideas[0].monthly_search_volumes == [
+            {"year": "2026", "month": "JANUARY", "monthly_searches": 100}
+        ]
+
+    def test_google_ads_request_uses_configured_market(self):
+        expander = KeywordExpander(
+            "test-expander",
+            config={
+                "google_ads_language": "languageConstants/1001",
+                "google_ads_geo_target_constants": ["geoTargetConstants/2826"],
+            },
+        )
+        expander.google_ads_config = {
+            "GOOGLE_ADS_DEVELOPER_TOKEN": "developer-token",
+            "GOOGLE_ADS_CLIENT_ID": "client-id",
+            "GOOGLE_ADS_CLIENT_SECRET": "client-secret",
+            "GOOGLE_ADS_REFRESH_TOKEN": "refresh-token",
+            "GOOGLE_ADS_CUSTOMER_ID": "123",
+            "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "456",
+        }
+        token_response = MagicMock()
+        token_response.json.return_value = {"access_token": "access-token"}
+        token_response.raise_for_status.return_value = None
+        ideas_response = MagicMock()
+        ideas_response.json.return_value = {"results": []}
+        ideas_response.raise_for_status.return_value = None
+
+        with patch.object(expander.session, "post", side_effect=[token_response, ideas_response]) as post:
+            expander._get_google_ads_keyword_ideas("lamp parts")
+
+        assert post.call_args_list[1].kwargs["json"]["language"] == "languageConstants/1001"
+        assert post.call_args_list[1].kwargs["json"]["geoTargetConstants"] == ["geoTargetConstants/2826"]
+        assert post.call_args_list[1].kwargs["json"]["keywordPlanNetwork"] == "GOOGLE_SEARCH"
+
+    def test_metadata_merges_sources_and_retains_planner_values(self):
+        """The same phrase from several sources should be one auditable record."""
+        expander = KeywordExpander("test-expander")
+        planner = KeywordExpansionResult(
+            original_keywords=[], expanded_keywords=[], keyword_sources={},
+            expansion_stats={}, metadata={}
+        )
+        del planner  # Ensure the test uses the public metadata representation below.
+        from src.modules.keyword_expander.keyword_expander import KeywordIdea
+        merged = expander._merge_ideas([
+            KeywordIdea("Lamp Parts", ["google_suggest"], ["lamp parts"]),
+            KeywordIdea("lamp parts", ["google_ads_keyword_planner"], ["lighting hardware"], 70, "LOW"),
+        ])
+        assert len(merged) == 1
+        assert merged[0].sources == ["google_suggest", "google_ads_keyword_planner"]
+        assert merged[0].seed_keywords == ["lamp parts", "lighting hardware"]
+        assert merged[0].avg_monthly_searches == 70
+        assert merged[0].competition == "LOW"
+
 
 class TestExpandKeywordsFunction:
     """expand_keywords函数测试类"""
