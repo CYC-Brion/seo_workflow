@@ -12,8 +12,10 @@ Main pipeline:
 5. Generate article content with AI
 6. Publish to WordPress
 
-The primary publishing strategy is now WordPress native `future` scheduling.
-GitHub Actions is no longer used as the default hourly auto-publisher.
+Publishing uses WordPress native `future` scheduling: the CLI generates articles and
+schedules them as WordPress posts with a future timestamp. All publishing happens
+locally. There is no GitHub Actions publisher — it was removed so the repository can
+never publish anything on its own.
 
 ## Current Default Behavior
 The default scheduling configuration is:
@@ -168,14 +170,9 @@ Current prompt strategy is intentionally B2B-manufacturing oriented:
 - articles should sound like an experienced manufacturer or sourcing advisor, not a generic content site
 - conclusions should guide readers toward relevant product, service, or inquiry pages instead of ending with a generic summary
 
-## Legacy GitHub Workflow
-`.github/workflows/auto-publish.yml` is retained only as a manual fallback for old draft-based publishing.
-
-- it no longer runs on a cron schedule
-- it should not be treated as the primary publishing mechanism
-
 ## Notes
 
-- WordPress scheduling is now the source of truth for automatic publishing
-- if the WordPress site schedules correctly, GitHub cron is unnecessary
+- WordPress native scheduling is the only automatic publishing mechanism
+- nothing in this repository publishes on its own; the only workflow under
+  `.github/workflows/` is a secret scanner
 - if you lose network during AI generation, some content batches may fail and need a targeted rerun

@@ -32,11 +32,18 @@ dependencies = [
     "fastapi>=0.104.0",
     "apscheduler>=3.10.0",
     "python-dotenv>=1.0.0",
+    # 以下为代码实际使用但此前遗漏的依赖
+    "openpyxl>=3.1.0",   # src/modules/excel_reader、CLI 读取关键词工作簿
+    "requests>=2.31.0",  # 关键词扩展、WordPress/WP-API 调用
+    "urllib3>=2.0.0",    # 重试策略（HTTPAdapter/Retry）
+    "loguru>=0.7.0",     # src/utils/logger.py 的日志实现
+    "Pillow>=10.0.0",    # scripts/import_new_editorial_images.py 图片处理
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
     "black>=23.0.0",
     "flake8>=6.0.0",
     "mypy>=1.5.0",
@@ -69,4 +76,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --cov=src --cov-report=html --cov-report=term-missing"
+# 不再默认生成 HTML 覆盖率报告：它会在仓库根重建 htmlcov/，而 htmlcov/ 是
+# 构建产物不入库。需要时手动加 --cov-report=html。
+addopts = "-v --cov=src --cov-report=term-missing"
