@@ -66,6 +66,11 @@
   现在 `.github/workflows/` 下只有 `secret-scan.yml`。
 - **历史中的 `.env`** —— 曾经有 3 个提交包含真实凭证。已在历史改写中清除，
   并配了 `secret-scan.yml` 防复发。
+- **`requirements.txt`** —— 已删除。它和 `pyproject.toml` 互相矛盾，且约一半内容是
+  全项目零引用的包（fastapi、celery、redis、jupyter 等）。依赖以 `pyproject.toml`
+  为唯一来源，安装用 `pip install -e ".[dev]"`。
+- **根目录的 `测试用例.xlsx`** —— 已改名为 `keyword_library/sample_keywords.xlsx`。
+  它是 README 与 `docs/Guiding.md` 里示例命令的输入，放在关键词目录下更合理。
 
 ## scripts/archive/
 
