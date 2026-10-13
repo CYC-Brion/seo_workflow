@@ -25,12 +25,22 @@ KEYWORD_FILTER_PROMPT = {
         "control, materials, finishes, and related procurement intent."
     ),
     "user": (
-        "Filter the keyword list below. Remove anything irrelevant, vague, or off-topic "
-        "for a B2B manufacturing site. Return only the relevant keywords as a plain list.\n\n"
+        "Filter the keyword list below for Yusheng, a B2B manufacturer of lighting hardware, "
+        "lamp parts, custom metal components, tubes, panels, joints, and machined parts.\n\n"
+        "Keep only terms with a clear fit for industrial manufacturing, OEM/ODM, product components, "
+        "materials, finishes, tolerances, factory capability, quality control, sourcing, supplier evaluation, "
+        "or B2B project procurement.\n\n"
+        "Always exclude automotive and vehicle lighting (for example car, truck, motorcycle, headlight, tail light, "
+        "light bar, wiring harness, restoration); consumer retail or local-shopping intent (for example near me, store, "
+        "shop, retail, Amazon, Walmart, Home Depot); and unrelated finished consumer products, installation/repair, "
+        "or vague terms with no manufacturing or procurement intent.\n\n"
+        "When a term is ambiguous, keep it only if a procurement team, engineer, product manager, or sourcing specialist "
+        "could plausibly use it to find a supplier, component, manufacturing process, or quality solution. "
+        "Return only the relevant keywords as a plain list.\n\n"
         "Keywords: {keywords}"
     ),
-    "version": "2.0",
-    "description": "Filter the keyword pool down to B2B manufacturing-relevant terms.",
+    "version": "2.1",
+    "description": "Filter the keyword pool to B2B manufacturing terms and explicitly remove automotive and retail intent.",
     "parameters": {
         "temperature": 0.2,
         "max_tokens": 1000,
@@ -316,6 +326,7 @@ PROMPT_VERSIONS = {
     "keyword_filter": {
         "1.0": KEYWORD_FILTER_PROMPT,
         "2.0": KEYWORD_FILTER_PROMPT,
+        "2.1": KEYWORD_FILTER_PROMPT,
     },
     "title_generator": {
         "1.0": TITLE_GENERATOR_PROMPT,
@@ -343,7 +354,7 @@ PROMPT_VERSIONS = {
 
 
 CURRENT_VERSIONS = {
-    "keyword_filter": "2.0",
+    "keyword_filter": "2.1",
     "title_generator": "2.0",
     "content_generator": "2.3",
 }
