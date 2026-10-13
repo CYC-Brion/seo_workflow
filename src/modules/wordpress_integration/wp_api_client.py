@@ -313,10 +313,9 @@ class WordPressRESTClient(WordPressClient):
         if media_data.description:
             data['description'] = media_data.description
 
-        # 移除默认的Content-Type头，让requests自动设置multipart/form-data
-        headers = self.session.headers.copy()
-        if 'Content-Type' in headers:
-            del headers['Content-Type']
+        # Override session-level Content-Type so requests auto-sets multipart/form-data
+        # Deleting from a copy is not enough — the session default still bleeds through.
+        headers = {"Content-Type": None}
 
         try:
             self.logger.debug(f"上传媒体文件: {file_name}")

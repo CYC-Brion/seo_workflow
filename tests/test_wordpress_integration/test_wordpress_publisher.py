@@ -66,6 +66,45 @@ class TestWordPressPublisher:
         assert publish_input.publish_status == "draft"
         assert publish_input.author_id == 1
 
+    def test_uploads_local_editorial_images_and_sets_featured_media(self, tmp_path):
+        image_path = tmp_path / "floor-lamp.webp"
+        image_path.write_bytes(b"webp")
+        self.publisher.enable_media_upload = True
+        self.publisher.wp_client = Mock()
+        self.publisher.wp_client.upload_media.side_effect = [
+            {"id": 501, "source_url": "https://example.com/floor-lamp.webp"},
+            {"id": 502, "source_url": "https://example.com/qc.webp"},
+        ]
+        self.publisher.wp_client.create_post.return_value = {
+            "id": 100, "link": "https://example.com/post", "date": "2026-01-01"
+        }
+        marker = "<!-- editorial-image:factory/qc.webp -->"
+        post = WordPressPublishInput(
+            title="Floor Lamp Guide",
+            content=f"<article><h2>Quality Control</h2>{marker}</article>",
+            featured_image_path=str(image_path),
+            editorial_images=[
+                {
+                    "file": "factory/qc.webp",
+                    "path": str(image_path),
+                    "marker": marker,
+                    "alt_text": "Factory quality inspection",
+                    "width": 900,
+                    "height": 700,
+                }
+            ],
+        )
+
+        result = self.publisher._process_single_post(post)
+
+        wp_post = self.publisher.wp_client.create_post.call_args.args[0]
+        assert result.metadata["featured_media"] == 502
+        assert result.metadata["editorial_media"] == [{"id": 501, "file": "factory/qc.webp"}]
+        assert wp_post.featured_media == 502
+        assert marker not in wp_post.content
+        assert 'loading="lazy"' in wp_post.content
+        assert 'width="900" height="700"' in wp_post.content
+
     def test_wordpress_publish_result_creation(self):
         """测试WordPressPublishResult创建"""
         result = WordPressPublishResult(

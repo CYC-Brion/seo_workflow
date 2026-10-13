@@ -5,6 +5,7 @@ WordPress发布器节点
 
 import json
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -23,6 +24,9 @@ from .wp_api_client import (
     WordPressMediaData,
     get_wordpress_client,
     WordPressAPIError,
+)
+from src.enhanced_features.image_integration.editorial_image_library import (
+    build_inline_image_html,
 )
 
 
@@ -49,6 +53,8 @@ class WordPressPublishInput:
     categories: List[str] = field(default_factory=list)  # 分类名称列表
     tags: List[str] = field(default_factory=list)  # 标签名称列表
     featured_image_url: Optional[str] = None
+    featured_image_path: Optional[str] = None
+    editorial_images: List[Dict[str, Any]] = field(default_factory=list)
     publish_status: str = "draft"  # draft, publish, pending, private
     schedule_date: Optional[str] = None  # ISO格式: 2024-01-01T12:00:00
     author_id: Optional[int] = None
@@ -229,10 +235,20 @@ class WordPressPublisher(DataProcessingNode):
             else:
                 publish_status = post_input.publish_status or self.default_status
 
+            content = post_input.content
+            featured_media_id = None
+            uploaded_editorial_media: List[Dict[str, Any]] = []
+
+            if self.enable_media_upload:
+                content, uploaded_editorial_media = self._upload_editorial_images(
+                    content, post_input.editorial_images
+                )
+                featured_media_id = self._upload_featured_image(post_input)
+
             # 创建文章数据
             wp_post_data = WordPressPostData(
                 title=post_input.title,
-                content=post_input.content,
+                content=content,
                 excerpt=post_input.excerpt,
                 slug=post_input.slug,
                 status=publish_status,
@@ -243,9 +259,8 @@ class WordPressPublisher(DataProcessingNode):
                 date=post_date
             )
 
-            # 上传特色图片（如果启用）
-            featured_media_id = None
-            if self.enable_media_upload and post_input.featured_image_url:
+            # Retain legacy remote featured-image support for existing callers.
+            if self.enable_media_upload and not featured_media_id and post_input.featured_image_url:
                 try:
                     self.logger.info(f"下载特色图片: {post_input.featured_image_url}")
                     response = requests.get(
@@ -307,6 +322,7 @@ class WordPressPublisher(DataProcessingNode):
                     "categories": category_ids,
                     "tags": tag_ids,
                     "featured_media": featured_media_id,
+                    "editorial_media": uploaded_editorial_media,
                 }
             )
 
@@ -342,6 +358,62 @@ class WordPressPublisher(DataProcessingNode):
                 metadata={"error_details": str(e)}
             )
 
+    def _upload_featured_image(self, post_input: WordPressPublishInput) -> Optional[int]:
+        """Upload the locally selected featured image and return its media ID."""
+        if not post_input.featured_image_path:
+            return None
+        image = {
+            "path": post_input.featured_image_path,
+            "alt_text": post_input.title,
+            "caption": post_input.title,
+        }
+        result = self._upload_local_image(image)
+        return result.get("id") if result else None
+
+    def _upload_editorial_images(
+        self, content: str, editorial_images: List[Dict[str, Any]]
+    ) -> tuple:
+        """Upload local body images and replace their safe HTML placeholders."""
+        uploaded: List[Dict[str, Any]] = []
+        for image in editorial_images or []:
+            marker = str(image.get("marker", ""))
+            if not marker or marker not in content:
+                continue
+            result = self._upload_local_image(image)
+            if not result:
+                content = content.replace(marker, "")
+                continue
+            source_url = result.get("source_url") or result.get("guid", {}).get("rendered", "")
+            if not source_url:
+                content = content.replace(marker, "")
+                continue
+            content = content.replace(marker, build_inline_image_html(image, source_url))
+            uploaded.append({"id": result.get("id"), "file": image.get("file")})
+        return content, uploaded
+
+    def _upload_local_image(self, image: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Upload a curated local WebP file without downloading it from the web."""
+        file_path = Path(str(image.get("path", "")))
+        if not file_path.is_file():
+            self.logger.warning(f"Editorial image missing: {file_path}")
+            return None
+        try:
+            result = self.wp_client.upload_media(
+                WordPressMediaData(
+                    file_path=str(file_path),
+                    file_name=file_path.name,
+                    mime_type="image/webp",
+                    caption=str(image.get("caption", image.get("alt_text", ""))),
+                    alt_text=str(image.get("alt_text", "")),
+                    description=str(image.get("alt_text", "")),
+                )
+            )
+            self.stats["media_uploads"] += 1
+            return result
+        except (WordPressAPIError, OSError) as error:
+            self.logger.warning(f"Editorial image upload failed for {file_path.name}: {error}")
+            return None
+
     def _validate_and_prepare_input(self, input_data: Any) -> List[WordPressPublishInput]:
         """验证和准备输入数据"""
         inputs = []
@@ -376,6 +448,8 @@ class WordPressPublisher(DataProcessingNode):
                             categories=categories,
                             tags=tags,
                             featured_image_url=item.get("featured_image_url"),
+                            featured_image_path=item.get("featured_image_path"),
+                            editorial_images=item.get("editorial_images", []),
                             publish_status=item.get("publish_status", self.default_status),
                             schedule_date=item.get("schedule_date"),
                             author_id=item.get("author_id"),
@@ -404,6 +478,8 @@ class WordPressPublisher(DataProcessingNode):
                     categories=input_data.get("categories", []),
                     tags=input_data.get("tags", []),
                     featured_image_url=input_data.get("featured_image_url"),
+                    featured_image_path=input_data.get("featured_image_path"),
+                    editorial_images=input_data.get("editorial_images", []),
                     publish_status=input_data.get("publish_status", self.default_status),
                     schedule_date=input_data.get("schedule_date"),
                     author_id=input_data.get("author_id"),
