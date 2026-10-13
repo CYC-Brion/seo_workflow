@@ -42,17 +42,33 @@ venv.bak/
 logs/
 *.log
 
-# Data files
-data/output/
-data/cache/
-output/
-image/
+# Data files / 数据与运行产物
+# 根级目录一律用前导 / 锚定，避免误伤 src/data 这类嵌套同名目录
+/data/
+/output/
+/outputs/
+/pic/
+/image/
 future_publish_test.xlsx
+
+# Node / Codex 运行时依赖
+# node_modules 是指向仓库外缓存的符号链接，两个 .mjs 脚本依赖它，留在磁盘上但不入库
+node_modules/
+**/node_modules/
+
+# 测试与覆盖率产物
+.coverage
+.coverage.*
+/htmlcov/
+/.pytest_cache/
+/tmp/
 
 # OS
 .DS_Store
 Thumbs.db
 
 # Project specific
+.env
+client_secret_*.apps.googleusercontent.com.json
 *.db
 *.sqlite3
