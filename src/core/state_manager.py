@@ -16,6 +16,14 @@ from src.utils import get_logger, exception_handler
 from .workflow_engine import WorkflowStatus, WorkflowResult
 from .base_node import NodeStatus, NodeResult
 
+try:
+    from config.settings import CACHE_DIR as _CACHE_DIR
+except ImportError:  # config 包不可用时退回按 __file__ 锚定
+    _CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
+
+# 锚定到项目根，避免状态目录随启动目录漂移（原先是 CWD 相对的 "data/cache/states"）
+_DEFAULT_STORAGE_PATH = _CACHE_DIR / "states"
+
 
 class StorageType(Enum):
     """存储类型"""
@@ -87,7 +95,7 @@ class StateManager:
 
     def __init__(
         self,
-        storage_path: Union[str, Path] = "data/cache/states",
+        storage_path: Union[str, Path] = _DEFAULT_STORAGE_PATH,
         storage_type: StorageType = StorageType.JSON
     ):
         """

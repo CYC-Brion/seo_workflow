@@ -15,7 +15,8 @@ try:
 except ImportError:
     LOG_LEVEL = "INFO"
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    LOG_FILE = Path("logs/workflow.log")
+    # 即使 config.settings 不可用也要锚定到项目根，否则日志会落到启动目录下的 logs/
+    LOG_FILE = Path(__file__).resolve().parents[2] / "logs" / "workflow.log"
     DEBUG = False
 
 
